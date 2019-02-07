@@ -197,7 +197,7 @@ def load_tracking(data_path, par):
 
 
 def load_spiketrains(data_path, channel_idx):
-    io = neo.ExdirIO(data_path, plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs.Plugin(verbose=True)])
+    io = neo.ExdirIO(str(data_path), plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs.Plugin(verbose=True)])
     blk = io.read_block()
     channels = blk.channel_indexes
     chx = channels[channel_idx]
@@ -221,6 +221,3 @@ def get_data_path(action):
     data_path = str(pathlib.Path(pathlib.PureWindowsPath(action.data['main'])))
     print(data_path)
     return project_path / data_path
-
-
-

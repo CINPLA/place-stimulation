@@ -260,6 +260,3 @@ def get_data_path(action):
     data_path = str(pathlib.Path(pathlib.PureWindowsPath(action.data['main'])))
     print(data_path)
     return project_path / data_path
-
-
-

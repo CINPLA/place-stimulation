@@ -119,7 +119,7 @@ def interp_filt_position(x, y, tm, box_xlen=1 , box_ylen=1 ,
     """
     import scipy.signal as ss
     assert len(x) == len(y) == len(tm), 'x, y, t must have same length'
-    t = np.arange(tm.min(), tm.max() + 1. / pos_fs, 1. / pos_fs)
+    t = np.arange(tm.min(), tm.max() + 1. / pos_fs * tm.units, 1. / pos_fs * tm.units)
     x = np.interp(t, tm, x)
     y = np.interp(t, tm, y)
     # rapid head movements will contribute to velocity artifacts,
@@ -136,11 +136,15 @@ def interp_filt_position(x, y, tm, box_xlen=1 , box_ylen=1 ,
     if np.isnan(x).any() and np.isnan(y).any():
         raise ValueError('nans found in  position, ' +
             'x nans = %i, y nans = %i' % (sum(np.isnan(x)), sum(np.isnan(y))))
-    if (x.min() < 0 or x.max() > box_xlen or y.min() < 0 or y.max() > box_ylen):
-        raise ValueError(
-            "Interpolation produces path values " +
+    if x.min() < 0 or x.max() > box_xlen or y.min() < 0 or y.max() > box_ylen:
+        print(
+            "WARNING! Interpolation produces path values " +
             "outside box: min [x, y] = [{}, {}], ".format(x.min(), y.min()) +
             "max [x, y] = [{}, {}]".format(x.max(), y.max()))
+        x[x < 0] = 0
+        x[x > box_xlen] = 0
+        y[y < 0] = 0
+        y[y > box_ylen] = 0
 
     R = np.sqrt(np.diff(x)**2 + np.diff(y)**2)
     V = R / np.diff(t)
@@ -169,25 +173,54 @@ def rm_nans(*args):
     return out
 
 
-def load_tracking(data_path, par):
+def load_tracking(data_path, par, select_tracking=None, interp=False):
     root_group = exdir.File(str(data_path), plugins=[exdir.plugins.quantities,
                                                      exdir.plugins.git_lfs])
     # tracking data
     position_group = root_group['processing']['tracking']['camera_0']['Position']
     stop_time = position_group.attrs.to_dict()["stop_time"]
-    x1, y1 = position_group['led_0']['data'].data.T
-    t1 = position_group['led_0']['timestamps'].data
-    x2, y2 = position_group['led_0']['data'].data.T
-    t2 = position_group['led_0']['timestamps'].data
-    unit = t1.units
+    led0 = False
+    led1 = False
 
-    x, y, t = select_best_position(x1, y1, t1, x2, y2, t2)
+    if 'led_0' in position_group.keys():
+        x1, y1 = position_group['led_0']['data'].data.T
+        t1 = position_group['led_0']['timestamps'].data
+        x1, y1, t1 = rm_nans(x1, y1, t1)
+        unit = t1.units
+        led0 = True
+    if 'led_1' in position_group.keys():
+        x2, y2 = position_group['led_1']['data'].data.T
+        t2 = position_group['led_1']['timestamps'].data
+        x2, y2, t2 = rm_nans(x2, y2, t2)
+        unit = t2.units
+        led1 = True
+
+    if select_tracking is None and led0 and led1:
+        x, y, t = select_best_position(x1, y1, t1, x2, y2, t2)
+    elif select_tracking is None and led0:
+        x, y, t = x1, y1, t1
+    elif select_tracking is None and led1:
+        x, y, t = x2, y2, t2
+    elif select_tracking == 0 and led0:
+        x, y, t = x1, y1, t1
+    elif select_tracking == 1 and led1:
+        x, y, t = x2, y2, t2
+    else:
+        raise Exception('Selected tracking not found')
     t = t * unit
-    # x, y, t = interp_filt_position(x, y, t, pos_fs=par['pos_fs'], f_cut=par['f_cut'])
-    mask = t <= stop_time
-    x = x[mask]
-    y = y[mask]
-    t = t[mask]
+
+    if interp:
+        x, y, t = interp_filt_position(x, y, t, pos_fs=par['pos_fs'], f_cut=par['f_cut'])
+    # mask = t <= stop_time
+    # x = x[mask]
+    # y = y[mask]
+    # t = t[mask]
+
+    # remove zeros
+    idx_non_zero = np.where(x != 0)
+    x, y, t = x[idx_non_zero], y[idx_non_zero], t[idx_non_zero]
+    idx_non_zero = np.where(y != 0)
+    x, y, t = x[idx_non_zero], y[idx_non_zero], t[idx_non_zero]
 
     dt = np.mean(np.diff(t))
     vel = np.gradient([x, y], axis=1)/dt
@@ -196,18 +229,24 @@ def load_tracking(data_path, par):
     return x, y, t, speed
 
 
-def load_spiketrains(data_path, channel_idx):
-    io = neo.ExdirIO(data_path, plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs.Plugin(verbose=True)])
-    blk = io.read_block()
-    channels = blk.channel_indexes
-    chx = channels[channel_idx]
-    sptr = [u.spiketrains[0] for u in chx.units]
+def load_spiketrains(data_path, channel_idx=None, remove_label='noise'):
+    io = neo.ExdirIO(str(data_path), plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs.Plugin(verbose=True)])
+    if channel_idx is None:
+        blk = io.read_block()
+        sptr = blk.segments[0].spiketrains
+    else:
+        blk = io.read_block(channel_group_idx=channel_idx)
+        channels = blk.channel_indexes
+        chx = channels[0]
+        sptr = [u.spiketrains[0] for u in chx.units]
+    if remove_label is not None:
+        sptr = [s for s in sptr if remove_label not in s.annotations['cluster_group']]
     return sptr
 
 
 def load_epochs(data_path):
     io = neo.ExdirIO(str(data_path), plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs])
-    blk = io.read_block()
+    blk = io.read_block(channel_group_idx=0)
     seg = blk.segments[0]
     epochs = seg.epochs
     return epochs

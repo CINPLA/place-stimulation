@@ -5,7 +5,7 @@ import quantities as pq
 import numpy as np
 
 
-def plot_rate_map(x, y, t, sptr, binsize=0.02, smoothing=0.025, figsize=[5, 5], ax=None):
+def plot_rate_map(x, y, t, sptr, binsize=0.02, smoothing=0.03, figsize=[5, 5], ax=None):
     rate_map = tr.spatial_rate_map(x, y, t, sptr, binsize=binsize,
                                    box_xlen=1, box_ylen=1, smoothing=smoothing)
 
@@ -26,8 +26,11 @@ def plot_path(x, y, t, sptr, figsize=[5, 5], ax=None, s=30, c=[0.7, 0.2, 0.2], s
         ax = fig.add_subplot(111)
     ax.plot(x, y, 'k', alpha=0.3)
 
-    x_spike = interp1d(t, x)
-    y_spike = interp1d(t, y)
+    sptr_t = sptr[sptr.times.magnitude < np.max(t)]
+    sptr_t = sptr_t[sptr_t.times.magnitude > np.min(t)]
+
+    x_spike = interp1d(t, x)(sptr_t)
+    y_spike = interp1d(t, y)(sptr_t)
 
     if scatter:
         ax.scatter(x_spike(t), y_spike(t), s=s, c=c, edgecolor="b")

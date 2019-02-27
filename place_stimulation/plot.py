@@ -19,19 +19,23 @@ def plot_rate_map(x, y, t, sptr, binsize=0.02, smoothing=0.025, figsize=[5, 5], 
     return ax
 
 
-def plot_path(x, y, t, sptr, figsize=[5, 5], ax=None, s=30, c=[0.7, 0.2, 0.2]):
+def plot_path(x, y, t, sptr, figsize=[5, 5], ax=None, s=30, c=[0.7, 0.2, 0.2], scatter=True):
 
     if ax is None:
         fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111)
     ax.plot(x, y, 'k', alpha=0.3)
 
-    x_spike = interp1d(t, x)(sptr)
-    y_spike = interp1d(t, y)(sptr)
+    x_spike = interp1d(t, x)
+    y_spike = interp1d(t, y)
 
-    ax.scatter(x_spike, y_spike, s=s, c=c)
-    plt.xticks([])
-    plt.yticks([])
+    if scatter:
+        ax.scatter(x_spike(t), y_spike(t), s=s, c=c, edgecolor="b")
+        plt.xticks([])
+        plt.yticks([])
+    else:
+        plt.xticks([])
+        plt.yticks([])
 
     return ax
 

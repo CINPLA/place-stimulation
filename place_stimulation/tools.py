@@ -240,7 +240,10 @@ def load_spiketrains(data_path, channel_idx=None, remove_label='noise'):
         chx = channels[0]
         sptr = [u.spiketrains[0] for u in chx.units]
     if remove_label is not None:
-        sptr = [s for s in sptr if remove_label not in s.annotations['cluster_group']]
+        if 'cluster_group' in sptr[0].annotations.keys():
+            sptr = [s for s in sptr if remove_label not in s.annotations['cluster_group']]
+        else:
+            print("Data have to be curated with phy to remove noise. Returning all spike trains")
     return sptr
 
 

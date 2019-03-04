@@ -3,6 +3,7 @@ import spatialspikefields as tr
 from scipy.interpolate import interp1d
 import quantities as pq
 import numpy as np
+import seaborn as sns
 
 
 def plot_rate_map(x, y, t, sptr, binsize=0.02, smoothing=0.03, figsize=[5, 5], ax=None):
@@ -38,29 +39,37 @@ def plot_path(x, y, t, sptr, figsize=[5, 5], ax=None, s=30, c=[0.7, 0.2, 0.2], s
 
     return ax
 
-def plot_split_path(x, y, t, sptr, figsize=[5, 5], ax1=None, ax2=None, s=30, c=[0.7, 0.2, 0.2], scatter=True):
-    if ax1 and ax2 is None:
-        fig = plt.figure(figsize=figsize)
-        ax1 = fig.add_subplot(111)
-        ax2 = fig.add_subplot(112)
-    origin = [x[0], y[0]]
-    x_axis = np.array(x - origin[0])
-    y_axis = np.array(y - origin[1])
-    new_x = np.insert(x_axis, 0, origin[0])
-    new_y = np.insert(y_axis, 0, origin[1])
 
-    ax1.plot(new_x, t, 'k', alpha=0.3)
-    ax2.plot(new_y, t, 'k', alpha=0.3)
+def plot_split_path(x, y, t, sptr, fig=None, figsize=(3, 20), scatter=True):
+    import matplotlib.gridspec as gridspec
+    if fig is None:
+        fig = plt.figure(figsize=figsize)
+        # sns.set(color_codes=True, style="darkgrid")
+    nr_channel = sptr.waveforms.shape[1]
+    for channel in range(nr_channel):
+        ax1 = fig.subplot2grid((2, 4), (0, 0), rowspan=2)
+        ax2 = fig.subplot2grid((2, 4), (0, 1), rowspan=2)
+        ax3 = fig.subplot2grid((2, 4), (0, 2), rowspan=2)
+        ax4 = fig.subplot2grid((2, 4), (0, 3), rowspan=2)
+    
+    origin = [x[0], y[0]]
+    x_values = np.array(x - origin[0])
+    y_values = np.array(y - origin[1])
+    x_values[0] = origin[0]
+    y_values[0] = origin[1]
+
+    ax.plot(x_values, t, 'k', alpha=0.3, axis=0)
+    ax.plot(y_values, t, 'k', alpha=0.3, axis=1)
 
     sptr_t = sptr[sptr.times.magnitude < np.max(t)]
     sptr_t = sptr_t[sptr_t.times.magnitude > np.min(t)]
 
-    x_spike = interp1d(t, new_x)(sptr_t)
-    y_spike = interp1d(t, new_y)(sptr_t)
+    x_spike = interp1d(t, x_values)(sptr_t)
+    y_spike = interp1d(t, y_values)(sptr_t)
 
     if scatter:
-        ax1.scatter(x_spike, t, s=s, c=c)
-        ax2.scatter(y_spike, t, s=s, c=c, edgecolor="b")
+        ax.scatter(x_spike, t, axis=0)
+        ax.scatter(y_spike, t, axis=1, edgecolor="b")
         plt.xticks([])
         plt.yticks([])
     else:

@@ -40,43 +40,40 @@ def plot_path(x, y, t, sptr, figsize=[5, 5], ax=None, s=30, c=[0.7, 0.2, 0.2], s
     return ax
 
 
-def plot_split_path(x, y, t, sptr, fig=None, figsize=(3, 20), scatter=True):
-    import matplotlib.gridspec as gridspec
+def plot_split_path(sptr, data_path, par, fig=None, figsize=(3, 20), scatter=True):
     if fig is None:
         fig = plt.figure(figsize=figsize)
         # sns.set(color_codes=True, style="darkgrid")
-    nr_channel = sptr.waveforms.shape[1]
+
+    # making subplots
+    nr_channel = 4
+    axs = []
     for channel in range(nr_channel):
-        ax1 = fig.subplot2grid((2, 4), (0, 0), rowspan=2)
-        ax2 = fig.subplot2grid((2, 4), (0, 1), rowspan=2)
-        ax3 = fig.subplot2grid((2, 4), (0, 2), rowspan=2)
-        ax4 = fig.subplot2grid((2, 4), (0, 3), rowspan=2)
-    
-    origin = [x[0], y[0]]
-    x_values = np.array(x - origin[0])
-    y_values = np.array(y - origin[1])
-    x_values[0] = origin[0]
-    y_values[0] = origin[1]
+        ax = plt.subplot2grid((2, 4), (0, channel), rowspan=2, fig=fig)
+        axs.append(ax)
 
-    ax.plot(x_values, t, 'k', alpha=0.3, axis=0)
-    ax.plot(y_values, t, 'k', alpha=0.3, axis=1)
+    # saving spiketrains from all four tetrodes in channel group
+    for channel in range(nr_channel):
+        x, y, t, speed = ps.load_tracking(data_path, par, select_tracking=1)    #need to fix loading of the load_tracking()
+        sptr_c = sptr[channel][sptr[channel].times.magnitude < np.max(t)]
+        sptr_c = sptr_c[sptr_c.times.magnitude > np.min(t)]
 
-    sptr_t = sptr[sptr.times.magnitude < np.max(t)]
-    sptr_t = sptr_t[sptr_t.times.magnitude > np.min(t)]
+        r = np.sqrt(x ** 2 + y ** 2)
+        axs[channel].plot(r, t, 'k', alpha=0.3)
 
-    x_spike = interp1d(t, x_values)(sptr_t)
-    y_spike = interp1d(t, y_values)(sptr_t)
-
-    if scatter:
-        ax.scatter(x_spike, t, axis=0)
-        ax.scatter(y_spike, t, axis=1, edgecolor="b")
-        plt.xticks([])
-        plt.yticks([])
-    else:
-        plt.xticks([])
-        plt.yticks([])
+        x_spike = interp1d(t, x)(sptr_c)
+        y_spike = interp1d(t, y)(sptr_c)
+        r_spike = np.sqrt(x_spike ** 2 + y_spike ** 2)
+        if scatter:
+            axs[channel].scatter(r_spike, t, edgecolor="b")
+            plt.xticks([])
+            plt.yticks([])
+        else:
+            plt.xticks([])
+            plt.yticks([])
 
     return fig
+
 
 def plot_psth(st, epoch, lags=(-0.1 * pq.s, 10 * pq.s), bin_size=0.01 * pq.s, ax=None, color='C0',
               figsize=[5, 5], n_trials=10):

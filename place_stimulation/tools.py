@@ -5,6 +5,216 @@ import exdir
 import exdir.plugins.quantities
 import exdir.plugins.git_lfs
 import pathlib
+import quantities as pq
+import spikeextractors as se
+import os
+
+
+def get_data_path(action):
+    action_path = action._backend.path
+    project_path = action_path.parent.parent
+    #data_path = action.data['main']
+    data_path = str(pathlib.Path(pathlib.PureWindowsPath(action.data['main'])))
+
+    print("Project path: {}\nData path: {}".format(project_path, data_path))
+    return project_path / data_path
+
+
+def get_sample_rate(data_path):
+    f = exdir.File(str(data_path), 'r', plugins=[exdir.plugins.quantities])
+    sr = None
+    if 'processing' in f.keys():
+        processing = f['processing']
+        if 'electrophysiology' in processing.keys():
+            ephys = processing['electrophysiology']
+            sr = ephys.attrs['sample_rate']
+    return sr
+
+
+def load_lfp(data_path):
+    f = exdir.File(str(data_path), 'r', plugins=[exdir.plugins.quantities])
+    # LFP
+    t_stop = f.attrs['session_duration']
+    _lfp = f['processing']['electrophysiology']['channel_group_0']['LFP']
+    keys = list(_lfp.keys())
+    electrode_value = [_lfp[key]['data'].value.flatten() for key in keys]
+    electrode_idx = [_lfp[key].attrs['electrode_idx'] for key in keys]
+    sampling_rate = _lfp[keys[0]].attrs['sample_rate']
+    units = _lfp[keys[0]]['data'].attrs['unit']
+    LFP = np.r_[[_lfp[key]['data'].value.flatten() for key in keys]].T
+    #LFP = (LFP.T - np.median(np.array(LFP), axis=-1)).T #CMR reference
+    #LFP = (LFP.T - LFP[:, 0]).T # use topmost channel as reference
+    LFP = LFP[:, np.argsort(electrode_idx)]
+
+    LFP = neo.AnalogSignal(LFP,
+                           units=units, t_stop=t_stop, sampling_rate=sampling_rate)
+    LFP = LFP.rescale('mV')
+    return LFP
+
+
+def load_epochs(data_path):
+    f = exdir.File(str(data_path), 'r', plugins=[exdir.plugins.quantities])
+    epochs_group = f['epochs']
+    epochs = []
+    for group in epochs_group.values():
+        if 'timestamps' in group.keys():
+            epo = _read_epoch(f, group.name)
+            epochs.append(epo)
+        else:
+            for g in group.values():
+                if 'timestamps' in g.keys():
+                    epo = _read_epoch(f, g.name)
+                    epochs.append(epo)
+    # io = neo.ExdirIO(str(data_path), plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs])
+    # blk = io.read_block()
+    # seg = blk.segments[0]
+    # epochs = seg.epochs
+    return epochs
+
+
+def load_spiketrains(data_path, channel_group=None, load_waveforms=False, remove_label='noise'):
+    '''
+
+    Parameters
+    ----------
+    data_path
+    channel_group
+    load_waveforms
+    remove_label
+
+    Returns
+    -------
+
+    '''
+    sample_rate = get_sample_rate(data_path)
+    sorting = se.ExdirSortingExtractor(data_path, sample_rate=sample_rate.magnitude,
+                                       channel_group=channel_group, load_waveforms=load_waveforms)
+    sptr = []
+    # build neo pbjects
+    for u in sorting.get_unit_ids():
+        times = sorting.get_unit_spike_train(u) / sample_rate
+        t_stop = np.max(times)
+        if load_waveforms and 'waveforms' in sorting.get_unit_spike_feature_names(u):
+            wf = sorting.get_unit_spike_features(u, 'waveforms')
+        else:
+            wf = None
+        sptr.append(neo.SpikeTrain(times=times, t_stop=t_stop, waveforms=wf))
+
+    return sptr
+
+
+def load_tracking(data_path, select_tracking=None, interp=False, fc=5*pq.Hz):
+    '''
+
+    Parameters
+    ----------
+    data_path
+    par
+    select_tracking
+    interp
+    fc
+
+    Returns
+    -------
+
+    '''
+    root_group = exdir.File(str(data_path), plugins=[exdir.plugins.quantities,
+                                                     exdir.plugins.git_lfs])
+    # tracking data
+    position_group = root_group['processing']['tracking']['camera_0']['Position']
+    stop_time = position_group.attrs.to_dict()["stop_time"]
+    led0 = False
+    led1 = False
+
+    if 'led_0' in position_group.keys():
+        x1, y1 = position_group['led_0']['data'].data.T
+        t1 = position_group['led_0']['timestamps'].data
+        unit = t1.units
+        x1, y1, t1 = rm_nans(x1, y1, t1)
+        led0 = True
+    if 'led_1' in position_group.keys():
+        x2, y2 = position_group['led_1']['data'].data.T
+        t2 = position_group['led_1']['timestamps'].data
+        unit = t2.units
+        x2, y2, t2 = rm_nans(x2, y2, t2)
+        led1 = True
+    print(t1, t1.units)
+
+    if select_tracking is None and led0 and led1:
+        x, y, t = select_best_position(x1, y1, t1, x2, y2, t2)
+    elif select_tracking is None and led0:
+        x, y, t = x1, y1, t1
+    elif select_tracking is None and led1:
+        x, y, t = x2, y2, t2
+    elif select_tracking == 0 and led0:
+        x, y, t = x1, y1, t1
+    elif select_tracking == 1 and led1:
+        x, y, t = x2, y2, t2
+    else:
+        raise Exception('Selected tracking not found')
+    # t = t * unit
+
+    dt = np.mean(np.diff(t))
+    fs = 1. / dt
+    print(fc, fs)
+
+    # remove zeros
+    idx_non_zero_x = np.where(x != 0)
+    xf, yf, tf = x[idx_non_zero_x], y[idx_non_zero_x], t[idx_non_zero_x]
+    idx_non_zero_y = np.where(yf != 0)
+    xf, yf, tf = xf[idx_non_zero_y], yf[idx_non_zero_y], tf[idx_non_zero_y]
+
+    print("Removed", (len(x) - len(xf)) / len(x) * 100, '% of tracking samples')
+
+    if interp:
+        xf, yf, tf = interp_filt_position(xf, yf, tf, pos_fs=fs, f_cut=fc)
+    # mask = t <= stop_time
+    # x = x[mask]
+    # y = y[mask]
+    # t = t[mask]
+
+    vel = np.gradient([xf, yf], axis=1)/dt
+    speed = np.linalg.norm(vel, axis=0)
+
+    return xf, yf, tf, speed
+
+
+def _read_epoch(exdir_file, path, lazy=False):
+    group = exdir_file[path]
+    if lazy:
+        times = []
+    else:
+        times = pq.Quantity(group['timestamps'].data,
+                            group['timestamps'].attrs['unit'])
+
+    if "durations" in group and not lazy:
+        durations = pq.Quantity(group['durations'].data, group['durations'].attrs['unit'])
+    elif "durations" in group and lazy:
+        durations = []
+    else:
+        durations = None
+
+    if 'data' in group and not lazy:
+        if 'unit' not in group['data'].attrs:
+            labels = group['data'].data
+        else:
+            labels = pq.Quantity(group['data'].data,
+                                 group['data'].attrs['unit'])
+    elif 'data' in group and lazy:
+        labels = []
+    else:
+        labels = None
+    annotations = {'exdir_path': path}
+    annotations.update(group.attrs.to_dict())
+
+    if lazy:
+        lazy_shape = (group.attrs['num_samples'],)
+    else:
+        lazy_shape = None
+    epo = neo.Epoch(times=times, durations=durations, labels=labels,
+                lazy_shape=lazy_shape, **annotations)
+
+    return epo
 
 
 def _cut_to_same_len(*args):
@@ -97,7 +307,7 @@ def select_best_position(x1, y1, t1, x2, y2, t2, speed_filter=5):
 
 
 def interp_filt_position(x, y, tm, box_xlen=1 , box_ylen=1 ,
-                         pos_fs=100 , f_cut=10 ):
+                         pos_fs=100, f_cut=10):
     """
     rapid head movements will contribute to velocity artifacts,
     these can be removed by low-pass filtering
@@ -171,95 +381,3 @@ def rm_nans(*args):
     for arg in args:
         out.append(np.delete(arg, nan_indices))
     return out
-
-
-def load_tracking(data_path, par, select_tracking=None, interp=False):
-    root_group = exdir.File(str(data_path), plugins=[exdir.plugins.quantities,
-                                                     exdir.plugins.git_lfs])
-    # tracking data
-    position_group = root_group['processing']['tracking']['camera_0']['Position']
-    stop_time = position_group.attrs.to_dict()["stop_time"]
-    led0 = False
-    led1 = False
-
-    if 'led_0' in position_group.keys():
-        x1, y1 = position_group['led_0']['data'].data.T
-        t1 = position_group['led_0']['timestamps'].data
-        x1, y1, t1 = rm_nans(x1, y1, t1)
-        unit = t1.units
-        led0 = True
-    if 'led_1' in position_group.keys():
-        x2, y2 = position_group['led_1']['data'].data.T
-        t2 = position_group['led_1']['timestamps'].data
-        x2, y2, t2 = rm_nans(x2, y2, t2)
-        unit = t2.units
-        led1 = True
-
-    if select_tracking is None and led0 and led1:
-        x, y, t = select_best_position(x1, y1, t1, x2, y2, t2)
-    elif select_tracking is None and led0:
-        x, y, t = x1, y1, t1
-    elif select_tracking is None and led1:
-        x, y, t = x2, y2, t2
-    elif select_tracking == 0 and led0:
-        x, y, t = x1, y1, t1
-    elif select_tracking == 1 and led1:
-        x, y, t = x2, y2, t2
-    else:
-        raise Exception('Selected tracking not found')
-    t = t * unit
-
-    if interp:
-        x, y, t = interp_filt_position(x, y, t, pos_fs=par['pos_fs'], f_cut=par['f_cut'])
-    # mask = t <= stop_time
-    # x = x[mask]
-    # y = y[mask]
-    # t = t[mask]
-
-    # remove zeros
-    idx_non_zero = np.where(x != 0)
-    x, y, t = x[idx_non_zero], y[idx_non_zero], t[idx_non_zero]
-    idx_non_zero = np.where(y != 0)
-    x, y, t = x[idx_non_zero], y[idx_non_zero], t[idx_non_zero]
-
-    dt = np.mean(np.diff(t))
-    vel = np.gradient([x, y], axis=1)/dt
-    speed = np.linalg.norm(vel, axis=0)
-
-    return x, y, t, speed
-
-
-def load_spiketrains(data_path, channel_idx=None, remove_label='noise'):
-    io = neo.ExdirIO(str(data_path), plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs.Plugin(verbose=True)])
-    if channel_idx is None:
-        blk = io.read_block()
-        sptr = blk.segments[0].spiketrains
-    else:
-        blk = io.read_block(channel_group_idx=channel_idx)
-        channels = blk.channel_indexes
-        chx = channels[0]
-        sptr = [u.spiketrains[0] for u in chx.units]
-    if remove_label is not None:
-        if 'cluster_group' in sptr[0].annotations.keys():
-            sptr = [s for s in sptr if remove_label not in s.annotations['cluster_group']]
-        else:
-            print("Data have to be curated with phy to remove noise. Returning all spike trains")
-    return sptr
-
-
-def load_epochs(data_path):
-    io = neo.ExdirIO(str(data_path), plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs])
-    blk = io.read_block(channel_group_idx=0)
-    seg = blk.segments[0]
-    epochs = seg.epochs
-    return epochs
-
-
-def get_data_path(action):
-    action_path = action._backend.path
-    project_path = action_path.parent.parent
-    print(project_path)
-    # data_path = action.data['main']
-    data_path = str(pathlib.Path(pathlib.PureWindowsPath(action.data['main'])))
-    print(data_path)
-    return project_path / data_path

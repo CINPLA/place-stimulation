@@ -72,7 +72,7 @@ def load_epochs(data_path):
     return epochs
 
 
-def load_spiketrains(data_path, channel_group=None, load_waveforms=False, remove_label='noise'):
+def load_spiketrains(data_path, channel_group=None, load_waveforms=False, t_start=0 * pq.s):
     '''
 
     Parameters
@@ -98,12 +98,15 @@ def load_spiketrains(data_path, channel_group=None, load_waveforms=False, remove
             wf = sorting.get_unit_spike_features(u, 'waveforms')
         else:
             wf = None
+        times = times - t_start
+        times = times[np.where(times > 0)]
+        wf = wf[np.where(times > 0)]
         sptr.append(neo.SpikeTrain(times=times, t_stop=t_stop, waveforms=wf))
 
     return sptr
 
 
-def load_tracking(data_path, select_tracking=None, interp=False, fc=5*pq.Hz):
+def load_tracking(data_path, select_tracking=None, interp=False, fc=5*pq.Hz, t_start=0 * pq.s):
     '''
 
     Parameters
@@ -131,14 +134,17 @@ def load_tracking(data_path, select_tracking=None, interp=False, fc=5*pq.Hz):
         t1 = position_group['led_0']['timestamps'].data
         unit = t1.units
         x1, y1, t1 = rm_nans(x1, y1, t1)
+        t1 = t1 - t_start
+        t1 = t1[np.where(t1 > 0)]
         led0 = True
     if 'led_1' in position_group.keys():
         x2, y2 = position_group['led_1']['data'].data.T
         t2 = position_group['led_1']['timestamps'].data
         unit = t2.units
         x2, y2, t2 = rm_nans(x2, y2, t2)
+        t2 = t2 - t_start
+        t2 = t2[np.where(t2 > 0)]
         led1 = True
-    print(t1, t1.units)
 
     if select_tracking is None and led0 and led1:
         x, y, t = select_best_position(x1, y1, t1, x2, y2, t2)

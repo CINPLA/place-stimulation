@@ -101,7 +101,9 @@ def load_spiketrains(data_path, channel_group=None, load_waveforms=False, t_star
         times = times - t_start
         times = times[np.where(times > 0)]
         wf = wf[np.where(times > 0)]
-        sptr.append(neo.SpikeTrain(times=times, t_stop=t_stop, waveforms=wf))
+        st = neo.SpikeTrain(times=times, t_stop=t_stop, waveforms=wf)
+        st.annotate(channel_group=sorting.get_unit_property(u, 'group'))
+        sptr.append(st)
 
     return sptr
 

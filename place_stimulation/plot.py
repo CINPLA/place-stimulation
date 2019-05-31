@@ -193,11 +193,10 @@ def plot_psth(st, epoch, lags=(-0.1 * pq.s, 10 * pq.s), bin_size=0.01 * pq.s, ax
             ax.plot(sts[h], np.zeros(len(sts[h])) + h+1, '|', color=color)
 
     ax.set_title('PSTH')
-    # ax.set_xticklabels([])
     ax.axvline(0)
     ax.set_xlabel('lag (s)')
     flatten_sts = [item for sublist in sts for item in sublist]
-    print(np.max(flatten_sts))
-    flatten_sts = flatten_sts / np.max(flatten_sts) * (n_trials-1)
-    print(np.max(flatten_sts))
-    ax.hist(flatten_sts, bins=bins, color=color, alpha=0.3)
+    if len(flatten_sts) > 0:
+        flatten_sts = flatten_sts / np.max(flatten_sts) * (n_trials-1)
+        ax.hist(flatten_sts, bins=bins, color=color, alpha=0.3)
+        ax.set_xticks([lags[0], 0*pq.s, lags[1]])

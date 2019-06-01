@@ -146,7 +146,6 @@ def load_tracking(data_path, select_tracking=None, interp=False, reverse_y=True,
         unit = t2.units
         x2, y2, t2 = rm_nans(x2, y2, t2)
         t2 = t2 * unit
-        x2, y2, t2 = rm_inconsistent_timestamps(x2, y2, t2)
         led1 = True
 
     if select_tracking is None and led0 and led1:
@@ -192,6 +191,8 @@ def load_tracking(data_path, select_tracking=None, interp=False, reverse_y=True,
 
     if reverse_y:
         yf = np.max(yf) - yf
+
+    xf, yf, tf = rm_inconsistent_timestamps(xf, yf, tf)
 
     return xf, yf, tf, speed
 

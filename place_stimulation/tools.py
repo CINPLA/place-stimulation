@@ -138,6 +138,7 @@ def load_tracking(data_path, select_tracking=None, interp=False, reverse_y=True,
         unit = t1.units
         x1, y1, t1 = rm_nans(x1, y1, t1)
         t1 = t1 * unit
+        x1, y1, t1 = rm_inconsistent_timestamps(x1, y1, t1)
         led0 = True
     if 'led_1' in position_group.keys():
         x2, y2 = position_group['led_1']['data'].data.T
@@ -145,6 +146,7 @@ def load_tracking(data_path, select_tracking=None, interp=False, reverse_y=True,
         unit = t2.units
         x2, y2, t2 = rm_nans(x2, y2, t2)
         t2 = t2 * unit
+        x2, y2, t2 = rm_inconsistent_timestamps(x2, y2, t2)
         led1 = True
 
     if select_tracking is None and led0 and led1:
@@ -407,6 +409,7 @@ def rm_nans(*args):
         out.append(np.delete(arg, nan_indices))
     return out
 
+
 def rm_inconsistent_timestamps(x, y, t):
     """
     Removes timestamps not linearly increasing
@@ -427,13 +430,13 @@ def rm_inconsistent_timestamps(x, y, t):
     t : quantities.Quantity array in s
         1d vector of cleaned times at x, y positions
     """
-    diff_violations = np.where(np.diff(t) < 0)[0]
+    diff_violations = np.where(np.diff(t) <= 0)[0]
     unit_t = t.units
     unit_pos = x.units
     if len(diff_violations) > 0:
-        tc = np.delete(t, diff_violations) * unit_t
-        xc = np.delete(x, diff_violations) * unit_pos
-        yc = np.delete(y, diff_violations) * unit_pos
+        tc = np.delete(t, diff_violations + 1) * unit_t
+        xc = np.delete(x, diff_violations + 1) * unit_pos
+        yc = np.delete(y, diff_violations + 1) * unit_pos
     else:
         tc = t
         xc = x

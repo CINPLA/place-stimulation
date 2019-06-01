@@ -383,3 +383,36 @@ def rm_nans(*args):
     for arg in args:
         out.append(np.delete(arg, nan_indices))
     return out
+
+def rm_inconsistent_timestamps(x, y, t):
+    """
+    Removes timestamps not linearly increasing
+    Parameters
+    ----------
+    x : quantities.Quantity array in m
+        1d vector of x positions
+    y : quantities.Quantity array in m
+        1d vector of y positions
+    t : quantities.Quantity array in s
+        1d vector of times at x, y positions
+    Returns
+    -------
+    x : quantities.Quantity array in m
+        1d vector of cleaned x positions
+    y : quantities.Quantity array in m
+        1d vector of cleaned y positions
+    t : quantities.Quantity array in s
+        1d vector of cleaned times at x, y positions
+    """
+    diff_violations = np.where(np.diff(t) < 0)[0]
+    unit_t = t.units
+    unit_pos = x.units
+    if len(diff_violations) > 0:
+        tc = np.delete(t, diff_violations) * unit_t
+        xc = np.delete(x, diff_violations) * unit_pos
+        yc = np.delete(y, diff_violations) * unit_pos
+    else:
+        tc = t
+        xc = x
+        yc = y
+    return xc, yc, tc

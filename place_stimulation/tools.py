@@ -434,6 +434,7 @@ def rm_inconsistent_timestamps(x, y, t):
     unit_t = t.units
     unit_pos = x.units
     if len(diff_violations) > 0:
+        print('here')
         tc = np.delete(t, diff_violations + 1) * unit_t
         xc = np.delete(x, diff_violations + 1) * unit_pos
         yc = np.delete(y, diff_violations + 1) * unit_pos
@@ -441,4 +442,6 @@ def rm_inconsistent_timestamps(x, y, t):
         tc = t
         xc = x
         yc = y
+    diff_violations = np.where(np.diff(tc) <= 0)[0]
+    print('Timestamps diff violations:', len(diff_violations))
     return xc, yc, tc

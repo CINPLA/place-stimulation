@@ -133,6 +133,7 @@ def load_tracking(data_path, select_tracking=None, interp=False, reverse_y=True,
         unit = t1.units
         x1, y1, t1 = rm_nans(x1, y1, t1)
         t1 = t1 * unit
+        x1, y1, t1 = rm_inconsistent_timestamps(x1, y1, t1)
         led0 = True
     if 'led_1' in position_group.keys():
         x2, y2 = position_group['led_1']['data'].data.T
@@ -185,6 +186,8 @@ def load_tracking(data_path, select_tracking=None, interp=False, reverse_y=True,
 
     if reverse_y:
         yf = np.max(yf) - yf
+
+    xf, yf, tf = rm_inconsistent_timestamps(xf, yf, tf)
 
     return xf, yf, tf, speed
 
@@ -401,3 +404,49 @@ def rm_nans(*args):
     for arg in args:
         out.append(np.delete(arg, nan_indices))
     return out
+
+
+def rm_inconsistent_timestamps(x, y, t):
+    """
+    Removes timestamps not linearly increasing
+    Parameters
+    ----------
+    x : quantities.Quantity array in m
+        1d vector of x positions
+    y : quantities.Quantity array in m
+        1d vector of y positions
+    t : quantities.Quantity array in s
+        1d vector of times at x, y positions
+    Returns
+    -------
+    x : quantities.Quantity array in m
+        1d vector of cleaned x positions
+    y : quantities.Quantity array in m
+        1d vector of cleaned y positions
+    t : quantities.Quantity array in s
+        1d vector of cleaned times at x, y positions
+    """
+    diff_violations = np.where(np.diff(t) <= 0)[0]
+    unit_t = t.units
+    unit_pos = x.units
+    if len(diff_violations) > 0:
+        if 0 in diff_violations:
+            tc = t[1:]
+            xc = x[1:]
+            yc = y[1:]
+            print('Timestamps diff violations:', len(diff_violations))
+            tc = np.delete(tc, diff_violations[1:] + 2) * unit_t
+            xc = np.delete(xc, diff_violations[1:] + 2) * unit_pos
+            yc = np.delete(yc, diff_violations[1:] + 2) * unit_pos
+        else:
+            print('Timestamps diff violations:', len(diff_violations))
+            tc = np.delete(t, diff_violations + 1) * unit_t
+            xc = np.delete(x, diff_violations + 1) * unit_pos
+            yc = np.delete(y, diff_violations + 1) * unit_pos
+        diff_violations = np.where(np.diff(tc) <= 0)[0]
+        assert len(diff_violations) == 0
+    else:
+        tc = t
+        xc = x
+        yc = y
+    return xc, yc, tc

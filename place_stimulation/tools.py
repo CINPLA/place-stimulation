@@ -20,14 +20,15 @@ def get_data_path(action):
     return project_path / data_path
 
 
-def get_sample_rate(data_path):
+def get_sample_rate(data_path, default_sample_rate=30000*pq.Hz):
     f = exdir.File(str(data_path), 'r', plugins=[exdir.plugins.quantities])
-    sr = None
+    sr = default_sample_rate
     if 'processing' in f.keys():
         processing = f['processing']
         if 'electrophysiology' in processing.keys():
             ephys = processing['electrophysiology']
-            sr = ephys.attrs['sample_rate']
+            if 'sample_rate' in ephys.attrs.keys():
+                sr = ephys.attrs['sample_rate']
     return sr
 
 
@@ -42,8 +43,6 @@ def load_lfp(data_path):
     sampling_rate = _lfp[keys[0]].attrs['sample_rate']
     units = _lfp[keys[0]]['data'].attrs['unit']
     LFP = np.r_[[_lfp[key]['data'].value.flatten() for key in keys]].T
-    #LFP = (LFP.T - np.median(np.array(LFP), axis=-1)).T #CMR reference
-    #LFP = (LFP.T - LFP[:, 0]).T # use topmost channel as reference
     LFP = LFP[:, np.argsort(electrode_idx)]
 
     LFP = neo.AnalogSignal(LFP,
@@ -65,10 +64,6 @@ def load_epochs(data_path):
                 if 'timestamps' in g.keys():
                     epo = _read_epoch(f, g.name)
                     epochs.append(epo)
-    # io = neo.ExdirIO(str(data_path), plugins=[exdir.plugins.quantities, exdir.plugins.git_lfs])
-    # blk = io.read_block()
-    # seg = blk.segments[0]
-    # epochs = seg.epochs
     return epochs
 
 
@@ -101,7 +96,7 @@ def load_spiketrains(data_path, channel_group=None, load_waveforms=False, t_star
         times = times - t_start
         times = times[np.where(times > 0)]
         wf = wf[np.where(times > 0)]
-        st = neo.SpikeTrain(times=times, t_stop=t_stop, waveforms=wf)
+        st = neo.SpikeTrain(times=times, t_stop=t_stop, waveforms=wf, sampling_rate=sample_rate)
         st.annotate(channel_group=sorting.get_unit_property(u, 'group'))
         sptr.append(st)
 

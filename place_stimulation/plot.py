@@ -8,6 +8,7 @@ from .tools import load_tracking
 
 
 # Source: Mikkel
+# TODO add channel idx
 def plot_waveforms(sptr, color='b', fig=None, title=None, lw=2, gs=None, sample_rate=None):
     """
     Visualize waveforms on respective channels
@@ -59,14 +60,14 @@ def plot_waveforms(sptr, color='b', fig=None, title=None, lw=2, gs=None, sample_
     return fig
 
 
-def plot_rate_map(x, y, t, sptr, boxsize=1, binsize=0.02, smoothing=0.02, ax=None, mask_zero_ooccupancy=True):
+def plot_rate_map(x, y, t, sptr, boxsize=1, binsize=0.02, smoothing=0.02, ax=None, mask_zero_occupancy=True):
     map = sm.SpatialMap(x, y, t, sptr, boxsize, binsize)
-    rate_map = map.rate_map(smoothing=smoothing, mask_zero_occupancy=mask_zero_ooccupancy)
+    rate_map = map.rate_map(smoothing=smoothing, mask_zero_occupancy=mask_zero_occupancy)
 
     if ax is None:
         fig = plt.figure()
         ax = fig.add_subplot(111)
-    ax.imshow(rate_map, origin="lower")
+    ax.imshow(rate_map.T, origin="lower")
     plt.xticks([])
     plt.yticks([])
 
@@ -105,6 +106,7 @@ def plot_path(x, y, t, sptr=None, figsize=[5, 5], ax=None, s=30, c1=[0.7, 0.2, 0
             y_spike = interp1d(t, y)(sptr_t)
 
             ax.scatter(x_spike, y_spike, s=s, c=c1)
+    ax.axis('equal')
     plt.xticks([])
     plt.yticks([])
 

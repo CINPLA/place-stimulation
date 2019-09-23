@@ -1,6 +1,8 @@
 # This is work in progress,
 import neo
 import numpy as np
+from pathlib import Path
+import expipe
 import exdir
 import exdir.plugins.quantities
 import exdir.plugins.git_lfs
@@ -8,6 +10,7 @@ import pathlib
 import quantities as pq
 import spikeextractors as se
 from copy import copy
+import glob
 import os
 
 
@@ -58,6 +61,32 @@ def get_sample_rate(data_path, default_sample_rate=30000 * pq.Hz):
             if 'sample_rate' in ephys.attrs.keys():
                 sr = ephys.attrs['sample_rate']
     return sr
+
+
+def get_channel_groups(data_path):
+    '''
+    Returns channeø groups of processing/electrophysiology
+
+    Parameters
+    ----------
+    data_path: Path
+        The action data path
+
+    Returns
+    -------
+    channel groups: list
+        The channel groups
+    '''
+    f = exdir.File(str(data_path), 'r', plugins=[exdir.plugins.quantities])
+    channel_groups = []
+    if 'processing' in f.keys():
+        processing = f['processing']
+        if 'electrophysiology' in processing.keys():
+            ephys = processing['electrophysiology']
+            for chname, ch in ephys.items():
+                if 'channel' in chname:
+                    channel_groups.append(int(chname.split('_')[-1]))
+    return channel_groups
 
 
 def load_lfp(data_path):
@@ -142,9 +171,20 @@ def load_spiketrains(data_path, channel_group=None, unit_id=None, load_waveforms
         List of neo.SpikeTrain objects
 
     '''
-    sample_rate = get_sample_rate(data_path)
-    sorting = se.ExdirSortingExtractor(data_path, sampling_frequency=sample_rate.magnitude,
+    sample_rate = get_sample_rate(str(data_path))
+    print(sample_rate)
+    sorting = se.ExdirSortingExtractor(str(data_path), sampling_frequency=sample_rate.magnitude,
                                        channel_group=channel_group, load_waveforms=load_waveforms)
+    # load channel_idx
+    exdir_file = exdir.File(data_path)
+    if channel_group is not None:
+        ch_idx = np.array(exdir_file['processing']['electrophysiology'][('channel_group_'
+                                                                + str(channel_group))].attrs['electrode_identities'])
+    else:
+        ch_idx = np.array([], dtype=int)
+        for chname, ch in exdir_file['processing']['electrophysiology'].items():
+            if 'channel' in chname:
+                ch_idx = np.concatenate((ch_idx, ch.attrs['electrode_identities']))
     sptr = []
     # build neo pbjects
     for u in sorting.get_unit_ids():
@@ -156,13 +196,18 @@ def load_spiketrains(data_path, channel_group=None, unit_id=None, load_waveforms
             wf = None
         times = times - t_start
         times = times[np.where(times > 0)]
-        wf = wf[np.where(times > 0)]
-        st = neo.SpikeTrain(times=times, t_stop=t_stop, waveforms=wf, sampling_rate=sample_rate)
+        if load_waveforms:
+            wf = wf[np.where(times > 0)]
+            st = neo.SpikeTrain(times=times, t_stop=t_stop, waveforms=wf, sampling_rate=sample_rate)
+        else:
+            st = neo.SpikeTrain(times=times, t_stop=t_stop, sampling_rate=sample_rate)
         for p in sorting.get_unit_property_names(u):
             st.annotations.update({p: sorting.get_unit_property(u, p)})
+        st.annotations['channel_idx'] = ch_idx
+        unit = int(st.annotations['name'].split('#')[-1])
+        st.annotations['unit_id'] = unit
         if unit_id is not None:
-            unit = st.annotations['name'].split('#')[-1]
-            if int(unit) == unit_id:
+            if st.annotations['unit_id'] == unit_id:
                 sptr.append(st)
         else:
             sptr.append(st)
@@ -558,6 +603,55 @@ def rm_inconsistent_timestamps(x, y, t, verbose=False):
         xc = x
         yc = y
     return xc, yc, tc
+
+
+def download_actions_from_dataframe(dataframe, project_path, epochs=True, tracking=True, spikes=True, spikesorting=False,
+                                    acquisition=False):
+    action_list = dataframe.action.to_list()
+    cwd = os.getcwd()
+
+    os.chdir(project_path)
+
+    try:
+        for a in action_list:
+            if epochs:
+                cmd = "git -c lfs.fetchexclude=\"\" lfs pull -I actions/" + a + "/data/main.exdir/epochs"
+                print(cmd)
+                os.system(cmd)
+            if tracking:
+                cmd = "git -c lfs.fetchexclude=\"\" lfs pull -I actions/" + a + "/data/main.exdir/processing/tracking"
+                print(cmd)
+                os.system(cmd)
+            if spikes:
+                ephys_dir = Path("actions/" + a + "/data/main.exdir/processing/electrophysiology/")
+                ch_dirs = [ch for ch in ephys_dir.iterdir() if 'spikesorting' not in ch.name and 'channel' in ch.name]
+                for ch in ch_dirs:
+                    cmd = "git -c lfs.fetchexclude=\"\" lfs pull -I actions/" + a + "/data/main.exdir/processing/" \
+                                                                                    "electrophysiology/" + str(ch.stem)
+                    print(cmd)
+                    os.system(cmd)
+            if spikesorting:
+                cmd = "git -c lfs.fetchexclude=\"\" lfs pull -I actions/" + a + "/data/main.exdir/processing/" \
+                                                                                "electrophysiology/spikesorting"
+                print(cmd)
+                os.system(cmd)
+            if acquisition:
+                cmd = "git -c lfs.fetchexclude=\"\" lfs pull -I actions/" + a + "/data/main.exdir/acquisition"
+                print(cmd)
+                os.system(cmd)
+    except:
+        print('something wrong')
+    os.chdir(cwd)
+
+
+def download_all_yaml(project_path):
+    cwd = os.getcwd()
+    os.chdir(project_path)
+
+    for file in glob.glob("*.yaml", recursive=True):
+        print(file)
+
+    os.chdir(cwd)
 
 
 def _read_epoch(exdir_file, path, lazy=False):

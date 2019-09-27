@@ -13,7 +13,7 @@ def get_unit_id(unit):
     return uid
 
 
-def dissimilarity(waveforms1, waveforms2):
+def dissimilarity(template_0, template_1):
     """
     Returns a value of dissimilarity of the mean between two or more
     spike templates.
@@ -30,18 +30,15 @@ def dissimilarity(waveforms1, waveforms2):
         Returns a matrix containing the computed dissimilarity between the mean
         of the spiketrain, for the same channel.
     """
-    template1 = compute_template(waveforms1)
-    template2 = compute_template(waveforms2)
+    t_i_lin = template_0.ravel()
+    t_j_lin = template_1.ravel()
 
-    t_i_lin = template1.ravel()
-    t_j_lin = template2.ravel()
-
-    max_val = np.max([np.max(np.abs(template1)), np.max(np.abs(template2))])
+    max_val = np.max([np.max(np.abs(template_0)), np.max(np.abs(template_1))])
 
     return np.mean(np.abs(t_i_lin / max_val - t_j_lin / max_val))
 
 
-def dissimilarity_weighted(waveforms1, waveforms2):
+def dissimilarity_weighted(waveforms_0, waveforms_1):
     """
     Returns a value of dissimilarity of the mean between two or more
     spike templates.
@@ -58,10 +55,10 @@ def dissimilarity_weighted(waveforms1, waveforms2):
         Returns a matrix containing the computed dissimilarity between the mean
         of the spiketrain, for the same channel.
     """
-    std1 = np.std(waveforms1, axis=0)
-    template1 = np.mean(waveforms1, axis=0)# * std1
-    std2 = np.std(waveforms2, axis=0)
-    template2 = np.mean(waveforms2, axis=0)# * std2
+    std1 = np.std(waveforms_0, axis=0)
+    template1 = np.mean(waveforms_0, axis=0)# * std1
+    std2 = np.std(waveforms_1, axis=0)
+    template2 = np.mean(waveforms_1, axis=0)# * std2
 
     t_i_lin = (template1 * std1).ravel()
     t_j_lin = (template2 * std2).ravel()
@@ -89,18 +86,38 @@ def compute_templates(spike_trains):
     return np.array(templates)
 
 
-def make_dissimilary_matrix(waveforms1, waveforms2, unit_ids1, unit_ids2, function=None):
-    function = dissimilarity if function is None else function
-    diss_matrix = np.zeros((len(waveforms1), len(waveforms2)))
+def make_dissimilary_matrix(comp_object, channel_group):
+    templates_0 = comp_object.templates[channel_group][0]
+    templates_1 = comp_object.templates[channel_group][1]
+    diss_matrix = np.zeros((len(templates_0), len(templates_1)))
 
-    for i, w1 in enumerate(waveforms1):
-        for j, w2 in enumerate(waveforms2):
-            diss_matrix[i, j] = function(w1, w2)
+    for i, t0 in enumerate(templates_0):
+        for j, t1 in enumerate(templates_1):
+            diss_matrix[i, j] = dissimilarity(t0, t1)
 
     diss_matrix = pd.DataFrame(
-        diss_matrix, index=unit_ids1, columns=unit_ids2)
+        diss_matrix,
+        index=comp_object.unit_ids[channel_group][0],
+        columns=comp_object.unit_ids[channel_group][1])
 
     return diss_matrix
+
+
+# def make_dissimilary_matrix(comp_object, channel_group):
+#     waveforms_0 = comp_object.waveforms_0(channel_group)
+#     waveforms_1 = comp_object.waveforms_1(channel_group)
+#     diss_matrix = np.zeros((len(waveforms_0), len(waveforms_1)))
+#
+#     for i, w0 in enumerate(waveforms_0):
+#         for j, w1 in enumerate(waveforms_1):
+#             diss_matrix[i, j] = dissimilarity_weighted(w0, w1)
+#
+#     diss_matrix = pd.DataFrame(
+#         diss_matrix,
+#         index=comp_object.unit_ids[channel_group][0],
+#         columns=comp_object.unit_ids[channel_group][1])
+#
+#     return diss_matrix
 
 
 def make_possible_match(dissimilarity_scores, max_dissimilarity):
@@ -264,10 +281,24 @@ def plot_waveform(wf, fig, gs, axs=None, **kwargs):
     for c in range(nrc):
         wf_ch = wf[:, c, :]
         m = np.mean(wf_ch, axis=0)
-        sd = np.std(wf_ch, axis=0) / wf.shape[0]
+        sd = np.std(wf_ch, axis=0)
         samples = np.arange(wf.shape[2])
         axs[c].plot(samples, m, **kwargs)
         axs[c].fill_between(samples, m-sd, m+sd, alpha=.1, color=kwargs.get('color'))
+        if c > 0:
+            plt.setp(axs[c].get_yticklabels(), visible=False)
+    return axs
+
+
+def plot_template(template, fig, gs, axs=None, **kwargs):
+    # template = np.squeeze(template).T
+    nrc = template.shape[0]
+    if axs is None:
+        gs0 = gridspec.GridSpecFromSubplotSpec(1, nrc, subplot_spec=gs)
+        axs = [fig.add_subplot(gs0[0])]
+        axs.extend([fig.add_subplot(gs0[i], sharey=axs[0], sharex=axs[0]) for i in range(1, nrc)])
+    for c in range(nrc):
+        axs[c].plot(template[c, :], **kwargs)
         if c > 0:
             plt.setp(axs[c].get_yticklabels(), visible=False)
     return axs

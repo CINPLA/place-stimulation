@@ -2,7 +2,7 @@ import numpy as np
 import networkx as nx
 from .trackunitcomparison import TrackingSession
 from .data_processing import get_data_path, get_channel_groups, load_spiketrains
-from .track_units_tools import get_unit_id, compute_templates, plot_waveform, lighten_color
+from .track_units_tools import get_unit_id, compute_templates, plot_waveform, lighten_color, plot_template
 import matplotlib.pylab as plt
 from tqdm import tqdm
 import uuid
@@ -12,14 +12,13 @@ from collections import defaultdict
 
 class TrackMultipleSessions:
     def __init__(self, action_list, actions, channel_group=None,
-                 max_dissimilarity=None, dissimilarity_function=None,
+                 max_dissimilarity=None,
                  verbose=False, progress_bar=None):
 
         self.action_list = action_list
         self._actions = actions
         self._channel_group = channel_group
         self.max_dissimilarity = max_dissimilarity or np.inf
-        self.dissimilarity_function = dissimilarity_function
         self._verbose = verbose
         self._pbar = tqdm if progress_bar is None else progress_bar
 
@@ -49,7 +48,6 @@ class TrackMultipleSessions:
                     self.action_list[i], self.action_list[j],
                     actions=self._actions,
                     max_dissimilarity=self.max_dissimilarity,
-                    dissimilarity_function=self.dissimilarity_function,
                     channel_group=self._channel_group,
                     verbose=self._verbose)
                 pbar.update(1)
@@ -71,31 +69,24 @@ class TrackMultipleSessions:
             # nodes
             for comp in self.comparisons:
                 # if same node is added twice it's only created once
-                action_id = comp.action_id_1
-                for u in comp.matches[ch]['unit_ids_1']:
-                    node_name = action_id + '_' + str(u)
-                    self.graphs[ch].add_node(
-                        node_name, action_id=action_id,
-                        unit_id=u)
-
-                action_id = comp.action_id_2
-                for u in comp.matches[ch]['unit_ids_2']:
-                    node = action_id + '_' + str(u)
-                    self.graphs[ch].add_node(
-                        node_name, action_id=action_id,
-                        unit_id=u)
+                for i, action_id in enumerate(comp.action_ids):
+                    for u in comp.unit_ids[ch][i]:
+                        node_name = action_id + '_' + str(u)
+                        self.graphs[ch].add_node(
+                            node_name, action_id=action_id,
+                            unit_id=u)
 
             # edges
             for comp in self.comparisons:
-                if 'hungarian_match_12' not in comp.matches[ch]:
+                if 'hungarian_match_01' not in comp.matches[ch]:
                     continue
-                for u1 in comp.matches[ch]['unit_ids_1']:
-                    u2 = comp.matches[ch]['hungarian_match_12'][u1]
+                for u1 in comp.unit_ids[ch][0]:
+                    u2 = comp.matches[ch]['hungarian_match_01'][u1]
                     if u2 != -1:
                         score = comp.matches[ch]['dissimilarity_scores'].loc[u1, u2]
                         if score <= max_dissimilarity:
-                            node1_name = comp.action_id_1 + '_' + str(u1)
-                            node2_name = comp.action_id_2 + '_' + str(u2)
+                            node1_name = comp.action_id_0 + '_' + str(u1)
+                            node2_name = comp.action_id_1 + '_' + str(u2)
                             self.graphs[ch].add_edge(node1_name, node2_name, weight=score)
 
             # the graph is symmetrical
@@ -133,25 +124,35 @@ class TrackMultipleSessions:
 
     def _get_waveforms(self, action_id, unit_id, channel_group):
         for comp in self.comparisons:
-            if action_id in comp.name_list:
-                i = comp.name_list.index(action_id) + 1
-                unit_ids = list(comp.matches[channel_group][f'unit_ids_{i}'])
+            if action_id in comp.action_ids:
+                i = comp.action_ids.index(action_id)
+                unit_ids = list(comp.unit_ids[channel_group][i])
                 unit_idx = unit_ids.index(unit_id)
                 wf = getattr(comp, f'waveforms_{i}')(channel_group)[unit_idx]
-                # wf = comp.matches[channel_group][f'waveforms{i}'][unit_idx]
                 break
         return wf
 
+    def _get_template(self, action_id, unit_id, channel_group):
+        for comp in self.comparisons:
+            if action_id in comp.action_ids:
+                i = comp.action_ids.index(action_id)
+                unit_ids = list(comp.unit_ids[channel_group][i])
+                unit_idx = unit_ids.index(unit_id)
+                template = comp.templates[channel_group][i][unit_idx]
+                break
+        return template
+
     def redo_match(self, max_dissimilarity):
+        self.max_dissimilarity = max_dissimilarity
         self._make_graph(max_dissimilarity=max_dissimilarity)
         self._identify_units()
 
-    def plot_matched_units(self, chan_group=None, figsize=(10, 3)):
+    def plot_matches(self, style='template', chan_group=None, figsize=(10, 3)):
         '''
 
         Parameters
         ----------
-        match_mode
+        style: 'template' or 'waveform'
 
         Returns
         -------
@@ -177,14 +178,26 @@ class TrackMultipleSessions:
                 axs = None
                 for action_id, unit_ids in unit.items():
                     for unit_id in unit_ids:
-                        waveforms = self._get_waveforms(action_id, unit_id, ch_group)
+
                         label = action_id + ' Unit ' + str(unit_id)
                         if axs is None:
                             color = 'C' + str(id_ax)
-                        axs = plot_waveform(
-                            waveforms,
-                            fig=fig, gs=gs[id_ax], axs=axs,
-                            color=color, label=label)
+
+                        if style == 'waveform':
+                            waveforms = self._get_waveforms(
+                                action_id, unit_id, ch_group)
+                            axs = plot_waveform(
+                                waveforms,
+                                fig=fig, gs=gs[id_ax], axs=axs,
+                                color=color, label=label)
+                        elif style == 'template':
+                            template = self._get_template(action_id, unit_id, ch_group)
+                            axs = plot_template(
+                                template,
+                                fig=fig, gs=gs[id_ax], axs=axs,
+                                color=color, label=label)
+                        else:
+                            raise ValueError('style must be "template" or "waveform"')
                         color = lighten_color(color)
                 id_ax += 1
                 plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))

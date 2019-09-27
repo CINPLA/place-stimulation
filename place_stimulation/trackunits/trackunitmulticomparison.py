@@ -8,13 +8,14 @@ from tqdm import tqdm
 import uuid
 from matplotlib import gridspec
 from collections import defaultdict
-
+from pathlib import Path
 
 class TrackMultipleSessions:
     def __init__(self, action_list, actions, channel_group=None,
                  max_dissimilarity=None,
-                 verbose=False, progress_bar=None):
-
+                 verbose=False, progress_bar=None, data_path=None):
+        self.data_path = Path.cwd() if data_path is None else Path(data_path)
+        self.data_path.mkdir(parents=True, exist_ok=True)
         self.action_list = action_list
         self._actions = actions
         self._channel_group = channel_group
@@ -50,8 +51,9 @@ class TrackMultipleSessions:
                     max_dissimilarity=self.max_dissimilarity,
                     channel_group=self._channel_group,
                     verbose=self._verbose)
-                pbar.update(1)
+                # comp.save_dissimilarity_matrix()
                 self.comparisons.append(comp)
+                pbar.update(1)
         pbar.close()
 
     def _make_graph(self, max_dissimilarity=None):
@@ -91,6 +93,10 @@ class TrackMultipleSessions:
 
             # the graph is symmetrical
             self.graphs[ch] = self.graphs[ch].to_undirected()
+
+    def save_graphs(self):
+        for ch, graph in self.graphs.items():
+            nx.readwrite.write_yaml(graph, self.data_path / f'graph-group-{ch}.yaml')
 
     def _identify_units(self):
        if self._verbose:

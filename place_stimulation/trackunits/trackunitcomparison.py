@@ -3,6 +3,7 @@ from .track_units_tools import make_dissimilary_matrix, compute_templates, make_
 from .data_processing import get_data_path, load_spiketrains, get_channel_groups, load_unit_annotations
 import matplotlib.pylab as plt
 import numpy as np
+from pathlib import Path
 
 
 class TrackingSession:
@@ -64,6 +65,15 @@ class TrackingSession:
 
                 self._do_dissimilarity(channel_group)
                 self._do_matching(channel_group)
+
+    def save_dissimilarity_matrix(self, path=None):
+        path = path or Path.cwd()
+        for channel_group in self.matches:
+            if 'dissimilarity_scores' not in self.matches[channel_group]:
+                continue
+            filename = f'{self.action_id_0}_{self.action_id_1}_{channel_group}'
+            self.matches[channel_group]['dissimilarity_scores'].to_csv(
+                path / (filename + '.csv'))
 
     def waveforms_0(self, channel_group):
         action_0 = self._actions[self.action_id_0]

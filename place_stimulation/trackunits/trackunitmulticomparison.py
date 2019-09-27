@@ -69,14 +69,21 @@ class TrackMultipleSessions:
             self.graphs[ch] = nx.Graph()
 
             # nodes
-            for i, action_id in enumerate(self.action_list):
-                dp = get_data_path(self._actions[action_id])
-                sptr = load_spiketrains(data_path=dp, channel_group=ch)
-                for st in sptr:
-                    node_name = action_id + '_' + str(get_unit_id(st))
+            for comp in self.comparisons:
+                # if same node is added twice it's only created once
+                action_id = comp.action_id_1
+                for u in comp.matches[ch]['unit_ids_1']:
+                    node_name = action_id + '_' + str(u)
                     self.graphs[ch].add_node(
                         node_name, action_id=action_id,
-                        unit_id=get_unit_id(st))
+                        unit_id=u)
+
+                action_id = comp.action_id_2
+                for u in comp.matches[ch]['unit_ids_2']:
+                    node = action_id + '_' + str(u)
+                    self.graphs[ch].add_node(
+                        node_name, action_id=action_id,
+                        unit_id=u)
 
             # edges
             for comp in self.comparisons:

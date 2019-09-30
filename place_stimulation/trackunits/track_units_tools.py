@@ -62,8 +62,6 @@ def dissimilarity_weighted(waveforms_0, waveforms_1):
 
     t_i_lin = (template1 * std1).ravel()
     t_j_lin = (template2 * std2).ravel()
-    # t_i_lin = template1.ravel()
-    # t_j_lin = template2.ravel()
 
     max_val = np.max([np.max(np.abs(template1)), np.max(np.abs(template2))])
 
@@ -89,11 +87,38 @@ def compute_templates(spike_trains):
 def make_dissimilary_matrix(comp_object, channel_group):
     templates_0 = comp_object.templates[channel_group][0]
     templates_1 = comp_object.templates[channel_group][1]
+    chan_idx_0 = comp_object.chan_idx[channel_group][0]
+    chan_idx_1 = comp_object.chan_idx[channel_group][1]
     diss_matrix = np.zeros((len(templates_0), len(templates_1)))
+
+    # take care of missing channels
+    if chan_idx_0 is None and chan_idx_1 is None:
+        assert templates_0.shape == templates_1.shape
+        chans_0 = np.arange(templates_0.shape[1])
+        chans_1 = np.arange(templates_1.shape[1])
+    else:
+        if len(chan_idx_0) > len(chan_idx_1):
+            all_chans = np.arange(templates_0.shape[1])
+            chans = []
+            for c in all_chans:
+                if (chan_idx_0 - np.min(chan_idx_0))[c] in (chan_idx_1 - np.min(chan_idx_1)):
+                    chans.append(c)
+            chans_0 = np.array(chans)
+            chans_1 = np.arange(templates_1.shape[1])
+        elif len(chan_idx_0) < len(chan_idx_1):
+            all_chans = np.arange(templates_1.shape[1])
+            chans = []
+            for c in all_chans:
+                if (chan_idx_1 - np.min(chan_idx_1))[c] in (chan_idx_0 - np.min(chan_idx_0)):
+                    chans.append(c)
+            chans_1 = np.array(chans)
+            chans_0 = np.arange(templates_0.shape[1])
+        else:
+            chans_0 = chans_1 = np.arange(templates_0.shape[1])
 
     for i, t0 in enumerate(templates_0):
         for j, t1 in enumerate(templates_1):
-            diss_matrix[i, j] = dissimilarity(t0, t1)
+            diss_matrix[i, j] = dissimilarity(t0[chans_0], t1[chans_1])
 
     diss_matrix = pd.DataFrame(
         diss_matrix,
@@ -290,15 +315,17 @@ def plot_waveform(wf, fig, gs, axs=None, **kwargs):
     return axs
 
 
-def plot_template(template, fig, gs, axs=None, **kwargs):
+def plot_template(template, chan_idx, nrc, fig, gs, axs=None, **kwargs):
     # template = np.squeeze(template).T
-    nrc = template.shape[0]
+    chan_idx = list(chan_idx - np.min(chan_idx))
     if axs is None:
         gs0 = gridspec.GridSpecFromSubplotSpec(1, nrc, subplot_spec=gs)
         axs = [fig.add_subplot(gs0[0])]
         axs.extend([fig.add_subplot(gs0[i], sharey=axs[0], sharex=axs[0]) for i in range(1, nrc)])
     for c in range(nrc):
-        axs[c].plot(template[c, :], **kwargs)
-        if c > 0:
-            plt.setp(axs[c].get_yticklabels(), visible=False)
+        if c in chan_idx:
+            t_idx = chan_idx.index(c)
+            axs[c].plot(template[t_idx, :], **kwargs)
+            if c > 0:
+                plt.setp(axs[c].get_yticklabels(), visible=False)
     return axs

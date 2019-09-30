@@ -1,14 +1,15 @@
 import numpy as np
 import networkx as nx
 from .trackunitcomparison import TrackingSession
-from .data_processing import get_data_path, get_channel_groups, load_spiketrains
-from .track_units_tools import get_unit_id, compute_templates, plot_waveform, lighten_color, plot_template
+from ..tools import get_data_path, get_channel_groups
+from .track_units_tools import plot_waveform, lighten_color, plot_template
 import matplotlib.pylab as plt
 from tqdm import tqdm
 import uuid
 from matplotlib import gridspec
 from collections import defaultdict
 from pathlib import Path
+
 
 class TrackMultipleSessions:
     def __init__(self, action_list, actions, channel_group=None,
@@ -148,6 +149,17 @@ class TrackMultipleSessions:
                 break
         return template
 
+    def _get_channel_idx(self, action_id, channel_group):
+        chan_idx = []
+        for comp in self.comparisons:
+            if action_id in comp.action_ids:
+                i = comp.action_ids.index(action_id)
+                chan_idx = comp.chan_idx[channel_group]
+                if len(chan_idx) > 0:
+                    chan_idx = chan_idx[i]
+                    break
+        return chan_idx
+
     def redo_match(self, max_dissimilarity):
         self.max_dissimilarity = max_dissimilarity
         self._make_graph(max_dissimilarity=max_dissimilarity)
@@ -176,34 +188,43 @@ class TrackMultipleSessions:
                 for unit in identified_units.values()
                 if len(unit['original_unit_ids']) > 1]
             num_units = sum([len(u) for u in units])
+            if num_units == 0:
+                continue
             fig = plt.figure(figsize=(figsize[0], figsize[1] * num_units))
             gs = gridspec.GridSpec(num_units, 1)
             fig.suptitle('Channel group ' + str(ch_group))
             id_ax = 0
+            channel_idxs_len = []
             for unit in units:
-                axs = None
                 for action_id, unit_ids in unit.items():
-                    for unit_id in unit_ids:
+                    channel_idxs_len.append(len(self._get_channel_idx(action_id, ch_group)))
+            if len(channel_idxs_len) > 0:
+                nrc = np.max(channel_idxs_len)
+                for unit in units:
+                    axs = None
+                    for action_id, unit_ids in unit.items():
+                        for unit_id in unit_ids:
+                            label = action_id + ' Unit ' + str(unit_id)
+                            if axs is None:
+                                color = 'C' + str(id_ax)
 
-                        label = action_id + ' Unit ' + str(unit_id)
-                        if axs is None:
-                            color = 'C' + str(id_ax)
-
-                        if style == 'waveform':
-                            waveforms = self._get_waveforms(
-                                action_id, unit_id, ch_group)
-                            axs = plot_waveform(
-                                waveforms,
-                                fig=fig, gs=gs[id_ax], axs=axs,
-                                color=color, label=label)
-                        elif style == 'template':
-                            template = self._get_template(action_id, unit_id, ch_group)
-                            axs = plot_template(
-                                template,
-                                fig=fig, gs=gs[id_ax], axs=axs,
-                                color=color, label=label)
-                        else:
-                            raise ValueError('style must be "template" or "waveform"')
-                        color = lighten_color(color)
-                id_ax += 1
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+                            if style == 'waveform':
+                                waveforms = self._get_waveforms(
+                                    action_id, unit_id, ch_group)
+                                axs = plot_waveform(
+                                    waveforms,
+                                    fig=fig, gs=gs[id_ax], axs=axs,
+                                    color=color, label=label)
+                            elif style == 'template':
+                                template = self._get_template(action_id, unit_id, ch_group)
+                                chan_idx = self._get_channel_idx(action_id, ch_group)
+                                if len(chan_idx) > 0:
+                                    axs = plot_template(
+                                        template, chan_idx, nrc,
+                                        fig=fig, gs=gs[id_ax], axs=axs,
+                                        color=color, label=label)
+                            else:
+                                raise ValueError('style must be "template" or "waveform"')
+                            color = lighten_color(color)
+                    id_ax += 1
+                    plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))

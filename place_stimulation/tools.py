@@ -172,7 +172,6 @@ def load_spiketrains(data_path, channel_group=None, unit_id=None, load_waveforms
 
     '''
     sample_rate = get_sample_rate(str(data_path))
-    print(sample_rate)
     sorting = se.ExdirSortingExtractor(str(data_path), sampling_frequency=sample_rate.magnitude,
                                        channel_group=channel_group, load_waveforms=load_waveforms)
     # load channel_idx
@@ -213,6 +212,28 @@ def load_spiketrains(data_path, channel_group=None, unit_id=None, load_waveforms
             sptr.append(st)
 
     return sptr
+
+
+def load_unit_annotations(data_path, channel_group):
+    '''
+    Parameters
+    ----------
+    data_path
+    channel_group
+    Returns
+    -------
+    '''
+    sample_rate = get_sample_rate(data_path)
+    sorting = se.ExdirSortingExtractor(
+        data_path, sampling_frequency=sample_rate,
+        channel_group=channel_group, load_waveforms=False)
+    units = []
+    for u in sorting.get_unit_ids():
+        annotations = {}
+        for p in sorting.get_unit_property_names(u):
+            annotations.update({p: sorting.get_unit_property(u, p)})
+        units.append(annotations)
+    return units
 
 
 def load_tracking(data_path, select_tracking=None, interp=False, reverse_y=True, fc=5 * pq.Hz, t_start=0 * pq.s,

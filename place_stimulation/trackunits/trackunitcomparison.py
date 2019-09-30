@@ -1,6 +1,6 @@
 from .track_units_tools import make_dissimilary_matrix, compute_templates, make_possible_match, make_best_match, \
     make_hungarian_match, get_unit_id, dissimilarity
-from .data_processing import get_data_path, load_spiketrains, get_channel_groups, load_unit_annotations
+from ..tools import get_data_path, load_spiketrains, get_channel_groups, load_unit_annotations
 import matplotlib.pylab as plt
 import numpy as np
 from pathlib import Path
@@ -31,14 +31,17 @@ class TrackingSession:
             self.matches = {}
             self.templates = {}
             self.unit_ids = {}
+            self.chan_idx = {}
             for chan in channel_groups:
                 self.matches[chan] = dict()
                 self.templates[chan] = list()
                 self.unit_ids[chan] = list()
+                self.chan_idx[chan] = list()
         else:
             self.matches = {channel_group: dict()}
             self.templates = {channel_group: list()}
             self.unit_ids = {channel_group: list()}
+            self.chan_idx = {channel_group: list()}
 
         for channel_group in self.matches.keys():
             unit_annotations_0 = load_unit_annotations(
@@ -61,7 +64,17 @@ class TrackingSession:
                 compute_templates(self.waveforms_0(channel_group)),
                 compute_templates(self.waveforms_1(channel_group))
             ]
+
             if len(unit_annotations_0) > 0 and len(unit_annotations_1) > 0:
+                chan_idx_0 = self.sptr_0(channel_group=channel_group, load_waveforms=False)[0].annotations[
+                    'channel_idx']
+                chan_idx_1 = self.sptr_1(channel_group=channel_group, load_waveforms=False)[0].annotations[
+                    'channel_idx']
+
+                self.chan_idx[channel_group] = [
+                    chan_idx_0,
+                    chan_idx_1
+                ]
 
                 self._do_dissimilarity(channel_group)
                 self._do_matching(channel_group)
@@ -74,6 +87,26 @@ class TrackingSession:
             filename = f'{self.action_id_0}_{self.action_id_1}_{channel_group}'
             self.matches[channel_group]['dissimilarity_scores'].to_csv(
                 path / (filename + '.csv'))
+
+    def sptr_0(self, channel_group, load_waveforms=True):
+        action_0 = self._actions[self.action_id_0]
+
+        data_path_0 = get_data_path(action_0)
+
+        spike_trains_0 = load_spiketrains(
+            data_path_0, channel_group=channel_group, load_waveforms=load_waveforms)
+
+        return spike_trains_0
+
+    def sptr_1(self, channel_group, load_waveforms=True):
+        action_1 = self._actions[self.action_id_1]
+
+        data_path_1 = get_data_path(action_1)
+
+        spike_trains_1 = load_spiketrains(
+            data_path_1, channel_group=channel_group, load_waveforms=load_waveforms)
+
+        return spike_trains_1
 
     def waveforms_0(self, channel_group):
         action_0 = self._actions[self.action_id_0]

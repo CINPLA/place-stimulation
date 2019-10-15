@@ -30,12 +30,14 @@ def dissimilarity(template_0, template_1):
         Returns a matrix containing the computed dissimilarity between the mean
         of the spiketrain, for the same channel.
     """
+    max_val = np.max([np.max(np.abs(template_0)), np.max(np.abs(template_1))])
+
     t_i_lin = template_0.ravel()
     t_j_lin = template_1.ravel()
 
-    max_val = np.max([np.max(np.abs(template_0)), np.max(np.abs(template_1))])
 
     return np.mean(np.abs(t_i_lin / max_val - t_j_lin / max_val))
+    # return np.mean(np.abs(t_i_lin - t_j_lin))
 
 
 def dissimilarity_weighted(waveforms_0, waveforms_1):
@@ -55,19 +57,16 @@ def dissimilarity_weighted(waveforms_0, waveforms_1):
         Returns a matrix containing the computed dissimilarity between the mean
         of the spiketrain, for the same channel.
     """
-    std1 = np.std(waveforms_0, axis=0)
-    template1 = np.mean(waveforms_0, axis=0)# * std1
-    std2 = np.std(waveforms_1, axis=0)
-    template2 = np.mean(waveforms_1, axis=0)# * std2
+    template1 = np.mean(waveforms_0, axis=0)
 
-    t_i_lin = (template1 * std1).ravel()
-    t_j_lin = (template2 * std2).ravel()
-    # t_i_lin = template1.ravel()
-    # t_j_lin = template2.ravel()
+    template2 = np.mean(waveforms_1, axis=0)
 
     max_val = np.max([np.max(np.abs(template1)), np.max(np.abs(template2))])
 
-    return np.mean(np.abs(t_i_lin / max_val - t_j_lin / max_val))
+    template1 /= max_val
+    template2 /= max_val
+
+    return np.sqrt(np.sum([(template1[i] - template2[i])**2 for i in range(template1.shape[0])], axis=0)).mean()
 
 
 def compute_template(waveforms):
@@ -86,31 +85,14 @@ def compute_templates(spike_trains):
     return np.array(templates)
 
 
-def make_dissimilary_matrix(comp_object, channel_group):
-    templates_0 = comp_object.templates[channel_group][0]
-    templates_1 = comp_object.templates[channel_group][1]
-    diss_matrix = np.zeros((len(templates_0), len(templates_1)))
-
-    for i, t0 in enumerate(templates_0):
-        for j, t1 in enumerate(templates_1):
-            diss_matrix[i, j] = dissimilarity(t0, t1)
-
-    diss_matrix = pd.DataFrame(
-        diss_matrix,
-        index=comp_object.unit_ids[channel_group][0],
-        columns=comp_object.unit_ids[channel_group][1])
-
-    return diss_matrix
-
-
 # def make_dissimilary_matrix(comp_object, channel_group):
-#     waveforms_0 = comp_object.waveforms_0(channel_group)
-#     waveforms_1 = comp_object.waveforms_1(channel_group)
-#     diss_matrix = np.zeros((len(waveforms_0), len(waveforms_1)))
+#     templates_0 = comp_object.templates[channel_group][0]
+#     templates_1 = comp_object.templates[channel_group][1]
+#     diss_matrix = np.zeros((len(templates_0), len(templates_1)))
 #
-#     for i, w0 in enumerate(waveforms_0):
-#         for j, w1 in enumerate(waveforms_1):
-#             diss_matrix[i, j] = dissimilarity_weighted(w0, w1)
+#     for i, t0 in enumerate(templates_0):
+#         for j, t1 in enumerate(templates_1):
+#             diss_matrix[i, j] = dissimilarity(t0, t1)
 #
 #     diss_matrix = pd.DataFrame(
 #         diss_matrix,
@@ -118,6 +100,23 @@ def make_dissimilary_matrix(comp_object, channel_group):
 #         columns=comp_object.unit_ids[channel_group][1])
 #
 #     return diss_matrix
+
+
+def make_dissimilary_matrix(comp_object, channel_group):
+    waveforms_0 = comp_object.waveforms_0(channel_group)
+    waveforms_1 = comp_object.waveforms_1(channel_group)
+    diss_matrix = np.zeros((len(waveforms_0), len(waveforms_1)))
+
+    for i, w0 in enumerate(waveforms_0):
+        for j, w1 in enumerate(waveforms_1):
+            diss_matrix[i, j] = dissimilarity_weighted(w0, w1)
+
+    diss_matrix = pd.DataFrame(
+        diss_matrix,
+        index=comp_object.unit_ids[channel_group][0],
+        columns=comp_object.unit_ids[channel_group][1])
+
+    return diss_matrix
 
 
 def make_possible_match(dissimilarity_scores, max_dissimilarity):

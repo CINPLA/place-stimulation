@@ -10,6 +10,7 @@ import pathlib
 import quantities as pq
 import spikeextractors as se
 from copy import copy
+import spatial_maps as sm
 import glob
 import os
 
@@ -178,7 +179,8 @@ def load_spiketrains(data_path, channel_group=None, unit_id=None, load_waveforms
     exdir_file = exdir.File(data_path)
     if channel_group is not None:
         ch_idx = np.array(exdir_file['processing']['electrophysiology'][('channel_group_'
-                                                                + str(channel_group))].attrs['electrode_identities'])
+                                                                         + str(channel_group))].attrs[
+                              'electrode_identities'])
     else:
         ch_idx = np.array([], dtype=int)
         for chname, ch in exdir_file['processing']['electrophysiology'].items():
@@ -626,7 +628,8 @@ def rm_inconsistent_timestamps(x, y, t, verbose=False):
     return xc, yc, tc
 
 
-def download_actions_from_dataframe(dataframe, project_path, epochs=True, tracking=True, spikes=True, spikesorting=False,
+def download_actions_from_dataframe(dataframe, project_path, epochs=True, tracking=True, spikes=True,
+                                    spikesorting=False,
                                     acquisition=False):
     action_list = dataframe.action.to_list()
     cwd = os.getcwd()
@@ -665,14 +668,276 @@ def download_actions_from_dataframe(dataframe, project_path, epochs=True, tracki
     os.chdir(cwd)
 
 
-def download_all_yaml(project_path):
+def download_all_yaml(project_path, action_list=None):
     cwd = os.getcwd()
     os.chdir(project_path)
 
-    for file in glob.glob("*.yaml", recursive=True):
-        print(file)
+    for file in Path(os.getcwd()).absolute().glob('**/*.yaml'):
+        file = Path(file)
+        if action_list is None:
+            cmd = "git -c lfs.fetchexclude=\"\" lfs pull -I " + str(file)
+            print(cmd)
+        else:
+            if np.any([a in str(file) for a in action_list]):
+                cmd = "git -c lfs.fetchexclude=\"\" lfs pull -I " + str(file)
+                print(cmd)
 
     os.chdir(cwd)
+
+
+def crop_rate_maps(rate_map_0, rate_map_1):
+    rate_map_0_c = copy(rate_map_0)
+    rate_map_1_c = copy(rate_map_1)
+    if rate_map_0_c.shape != rate_map_1_c.shape:
+        if rate_map_0_c.shape[0] > rate_map_1_c.shape[0]:
+            extra_bins_0 = rate_map_0_c.shape[0] - rate_map_1_c.shape[0]
+            if np.mod(extra_bins_0, 2) == 0:
+                shift = extra_bins_0 // 2
+                rate_map_0_c = rate_map_0_c[shift:-shift]
+            else:
+                shift_0 = int(np.floor(extra_bins_0 / 2))
+                shift_1 = int(np.ceil(extra_bins_0 / 2))
+                rate_map_0_c = rate_map_0_c[shift_0:-shift_1]
+        elif rate_map_0_c.shape[0] < rate_map_1_c.shape[0]:
+            extra_bins_0 = rate_map_1_c.shape[0] - rate_map_0_c.shape[0]
+            if np.mod(extra_bins_0, 2) == 0:
+                shift = extra_bins_0 // 2
+                rate_map_1_c = rate_map_1_c[shift:-shift]
+            else:
+                shift_0 = int(np.floor(extra_bins_0 / 2))
+                shift_1 = int(np.ceil(extra_bins_0 / 2))
+                rate_map_1_c = rate_map_1_c[shift_0:-shift_1]
+
+        if rate_map_0_c.shape[1] > rate_map_1_c.shape[1]:
+            extra_bins_1 = rate_map_0_c.shape[1] - rate_map_1_c.shape[1]
+            if np.mod(extra_bins_1, 2) == 0:
+                shift = extra_bins_1 // 2
+                rate_map_0_c = rate_map_0_c[:, shift:-shift]
+            else:
+                shift_0 = int(np.floor(extra_bins_1 / 2))
+                shift_1 = int(np.ceil(extra_bins_1 / 2))
+                rate_map_0_c = rate_map_0_c[:, shift_0:-shift_1]
+        elif rate_map_0_c.shape[1] < rate_map_1_c.shape[1]:
+            extra_bins_1 = rate_map_1_c.shape[1] - rate_map_0_c.shape[1]
+            if np.mod(extra_bins_1, 2) == 0:
+                shift = extra_bins_1 // 2
+                rate_map_1_c = rate_map_1_c[:, shift:-shift]
+            else:
+                shift_0 = int(np.floor(extra_bins_1 / 2))
+                shift_1 = int(np.ceil(extra_bins_1 / 2))
+                rate_map_1_c = rate_map_1_c[:, shift_0:-shift_1]
+
+    return rate_map_0_c, rate_map_1_c
+
+
+def compute_rate_map(x, y, t, sptr, box_size, bin_size, xregion, yregion, smoothing):
+    box_size_, bin_size_ = sm.maps._adjust_bin_size(box_size=box_size, bin_size=bin_size)
+    xbins, ybins = sm.maps._make_bins(box_size_, bin_size_)
+    occupancy_map = sm.maps._occupancy_map(x, y, t, xbins, ybins)
+    mask = make_binary_mask(occupancy_map.shape, xregion * occupancy_map.shape[0], yregion * occupancy_map.shape[1])
+
+    smooth_occupancy_map = sm.maps.smooth_map(occupancy_map, bin_size=bin_size_, smoothing=smoothing, mask=mask,
+                                              preserve_nan=True)
+
+    spike_map = sm.maps._spike_map(x, y, t, sptr, xbins, ybins)
+    smooth_spike_map = sm.maps.smooth_map(spike_map, bin_size=bin_size_, smoothing=smoothing, mask=mask,
+                                          preserve_nan=True)
+
+    smooth_rate_map = smooth_spike_map / smooth_occupancy_map
+    smooth_rate_map[np.isinf(smooth_rate_map)] = 0
+
+    smooth_rate_map[smooth_rate_map < 0] = 0
+
+    return smooth_rate_map
+
+
+def find_putative_target_cell(pre, stim, post):
+    unique_id_pre = pre.unique_unit_id
+    unique_id_stim = stim.unique_unit_id
+    unique_id_post = post.unique_unit_id
+
+    unique_id_pre = unique_id_pre[unique_id_pre.isnull() == False].to_list()
+    unique_id_stim = unique_id_stim[unique_id_stim.isnull() == False].to_list()
+    unique_id_post = unique_id_post[unique_id_post.isnull() == False].to_list()
+
+    possible_target_id = []
+    possible_match = []
+    target_id = None
+    match = None
+
+    for upre in unique_id_pre:
+        if upre in unique_id_post and upre in unique_id_stim:
+            possible_target_id.append(upre)
+            possible_match.append('all')
+        elif upre in unique_id_post:
+            possible_target_id.append(upre)
+            possible_match.append('post')
+        elif upre in unique_id_stim:
+            possible_target_id.append(upre)
+            possible_match.append('stim')
+
+    if len(possible_target_id) > 1:
+        amps = [pre[pre.unique_unit_id == upre].iloc[0]['amplitude'] for upre in possible_target_id]
+        max_amp_id = np.argmax(amps)
+        target_id = possible_target_id[max_amp_id]
+        match = possible_match[max_amp_id]
+    elif len(possible_target_id) == 1:
+        target_id = possible_target_id[0]
+        match = possible_match[0]
+
+    return target_id, match
+
+
+def compute_correlation(cell_df1, actions, cell_df2=None, target_id=None, smoothing_rm='low', smoothing_st='high',
+                        return_maps=False, **kwargs_spatial):
+    if target_id is None:
+        print('Provide target_id')
+        return
+
+    interp = kwargs_spatial['interp']
+    quantiles = kwargs_spatial['quantiles']
+    fc = kwargs_spatial['fc']
+    xregion = kwargs_spatial['xregion']
+    yregion = kwargs_spatial['yregion']
+    smoothing_low = kwargs_spatial['smoothing_low']
+    smoothing_high = kwargs_spatial['smoothing_high']
+    bin_size = kwargs_spatial['bin_size']
+
+    if smoothing_rm == 'high':
+        smoothing_rate = smoothing_high
+    else:
+        smoothing_rate = smoothing_low
+    if smoothing_st == 'high':
+        smoothing_stim = smoothing_high
+    else:
+        smoothing_stim = smoothing_low
+
+    # check if cell in df
+    if target_id in cell_df1.unique_unit_id.values:
+        unit_row = cell_df1[cell_df1.unique_unit_id == target_id].iloc[0]
+        action = unit_row['action']
+        unit_id = unit_row['unit_id']
+        ch_group = unit_row['channel_group']
+
+        data_path = get_data_path(actions[action])
+        tags = actions[action].tags
+
+        if 'intan' in tags:
+            epochs = load_epochs(data_path)
+            if len(epochs) == 4:
+                # stimulation trial
+                sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id,
+                                        t_start=epochs[0].times[0], load_waveforms=True)
+                x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                               remove_quantiles=quantiles, t_start=epochs[2].times[0])
+            elif len(epochs) == 2:
+                # non-stim trial
+                sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id,
+                                        t_start=epochs[0].times[0], load_waveforms=True)
+                x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                               remove_quantiles=quantiles, t_start=epochs[1].times[0])
+            else:
+                print('Wrong epochs')
+        else:
+            x, y, t, speed = load_tracking(data_path, select_tracking=0, interp=interp, fc=fc,
+                                           remove_quantiles=quantiles)
+            sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id, load_waveforms=True)
+        box_size = np.array([np.max(x), np.max(y)])
+        x, y, t = remove_central_region(x, y, t, xregion * np.max(x), yregion * np.max(y))
+
+        rate_map_1 = compute_rate_map(x, y, t, sptr[0], box_size=box_size, bin_size=bin_size, xregion=xregion,
+                                      yregion=yregion, smoothing=smoothing_rate)
+
+        # get stim action
+        if cell_df2 is None:
+            if len(cell_df1.stim_action) > 0:
+                stim_action = cell_df1.iloc[0].stim_action
+                data_path = get_data_path(actions[stim_action])
+                tags = actions[stim_action].tags
+            else:
+                print('Could not load stimulation info')
+                return np.nan
+
+            if 'intan' in tags:
+                # print('Intan recording')
+                epochs = load_epochs(data_path)
+                if len(epochs) == 4:
+                    # stimulation trial
+                    times = epochs[1].times - epochs[0].times[0]
+                    sptr = [neo.SpikeTrain(times=times, t_start=0 * pq.s, t_stop=times[-1])]
+                    x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                                   remove_quantiles=quantiles, t_start=epochs[2].times[0])
+                    box_size = np.array([np.max(x), np.max(y)])
+                    x, y, t = remove_central_region(x, y, t, xregion * np.max(x), yregion * np.max(y))
+
+                    rate_map_2 = compute_rate_map(x, y, t, sptr, box_size=box_size, bin_size=bin_size,
+                                                  xregion=xregion, yregion=yregion, smoothing=smoothing_stim)
+            else:
+                print('Could not load stimulation info')
+                return np.nan
+        else:
+            if target_id in cell_df2.unique_unit_id.values:
+                unit_row = cell_df2[cell_df2.unique_unit_id == target_id].iloc[0]
+                action = unit_row['action']
+                unit_id = unit_row['unit_id']
+                ch_group = unit_row['channel_group']
+
+                data_path = get_data_path(actions[action])
+                tags = actions[action].tags
+
+                if 'intan' in tags:
+                    epochs = load_epochs(data_path)
+                    if len(epochs) == 4:
+                        # stimulation trial
+                        sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id,
+                                                t_start=epochs[0].times[0], load_waveforms=True)
+                        x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                                       remove_quantiles=quantiles, t_start=epochs[2].times[0])
+                    elif len(epochs) == 2:
+                        # non-stim trial
+                        sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id,
+                                                t_start=epochs[0].times[0], load_waveforms=True)
+                        x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                                       remove_quantiles=quantiles, t_start=epochs[1].times[0])
+                    else:
+                        print('Wrong epochs')
+                else:
+                    x, y, t, speed = load_tracking(data_path, select_tracking=0, interp=interp, fc=fc,
+                                                   remove_quantiles=quantiles)
+                    sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id, load_waveforms=True)
+                box_size = np.array([np.max(x), np.max(y)])
+                x, y, t = remove_central_region(x, y, t, xregion * np.max(x), yregion * np.max(y))
+
+                rate_map_2 = compute_rate_map(x, y, t, sptr[0], box_size=box_size, bin_size=bin_size, xregion=xregion,
+                                              yregion=yregion, smoothing=smoothing_rate)
+            else:
+                print('Could not find target cell in second dataframe')
+                return np.nan
+
+        rate_map_1c, rate_map_2c = crop_rate_maps(rate_map_1, rate_map_2)
+        rate_map_1c[np.where(np.isnan(rate_map_1c) == True)] = 0
+        rate_map_2c[np.where(np.isnan(rate_map_2c) == True)] = 0
+        rate_map_1lin = rate_map_1c.reshape((1, rate_map_1c.size))
+        rate_map_2lin = rate_map_2c.reshape((1, rate_map_1c.size))
+        
+        # remove nans
+        corr = np.corrcoef(rate_map_1lin, rate_map_2lin)[0, 1]
+
+        # corr = np.ma.corrcoef(np.ma.masked_invalid(rate_map_1lin), np.ma.masked_invalid(rate_map_2lin))[0, 1]
+    else:
+        print('Target cell not found for correlation')
+        rate_map_1c = rate_map_2c = None
+        corr = np.nan
+
+    if return_maps:
+        return corr, rate_map_1c, rate_map_2c
+    else:
+        return corr
+
+
+def save_phy_to_exdir(project, action, sorter):
+    import expipe_plugin_cinpla
+    expipe_plugin_cinpla.scripts.curation.process_save_phy(project, action, sorter)
 
 
 def _read_epoch(exdir_file, path, lazy=False):

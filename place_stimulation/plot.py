@@ -278,6 +278,7 @@ def session_summary(cell_df, actions, **kwargs_spatial):
             ax_pp.axis('off')
             ylim = [-300, 100]
             ax_wf = fig.add_subplot(nrows, ncols, 2 * ncols + i + 1)
+            ax_wf.axis('off')
             plot_waveforms(sptr[0], ax=ax_wf, ylim=ylim)
             ax_pp.axis('off')
             ax_rm.set_title(str(ch_group) + '-' + str(unit_id) + '-' + str(matched_id), fontsize=8)
@@ -326,7 +327,6 @@ def plot_target_cell(pre, stim, post, actions, target_id=None, smoothing_rm='low
         unique_id_post = unique_id_post[unique_id_post.isnull() == False].to_list()
 
         if target_id not in unique_id_pre:
-            display(unique_id_pre)
             raise Exception('target cell not in pre-stim list')
 
         match = None

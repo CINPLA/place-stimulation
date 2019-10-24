@@ -685,6 +685,33 @@ def download_all_yaml(project_path, action_list=None):
     os.chdir(cwd)
 
 
+def fftcorrelate2d(arr1, arr2, normalize=False, **kwargs):
+    from copy import copy
+    arr1 = copy(arr1)
+    arr2 = copy(arr2)
+    from astropy.convolution import convolve_fft
+    if normalize:
+        # https://stackoverflow.com/questions/53436231/normalized-cross-correlation-in-python
+        a_ = arr1.ravel()
+        v_ = arr2.ravel()
+        arr1 = (arr1 - np.mean(a_)) / (np.std(a_) * len(a_))
+        arr2 = (arr2 - np.mean(v_)) / np.std(v_)
+    corr = convolve_fft(arr1, np.fliplr(np.flipud(arr2)), normalize_kernel=False, **kwargs)
+    return corr
+
+
+def cross_correlation_centre_of_mass(r1, r2):
+    from scipy import ndimage
+    r12 = fftcorrelate2d(r1, r2)
+    cntr = ndimage.center_of_mass(r12)
+
+    centered_cntr = cntr - np.array(r1.shape) / 2
+    distance = np.linalg.norm(centered_cntr)
+    angle = np.arctan2(*centered_cntr)
+
+    return distance, angle
+
+
 def crop_rate_maps(rate_map_0, rate_map_1):
     rate_map_0_c = copy(rate_map_0)
     rate_map_1_c = copy(rate_map_1)
@@ -788,8 +815,157 @@ def find_putative_target_cell(pre, stim, post):
     return target_id, match
 
 
-def compute_correlation(cell_df1, actions, cell_df2=None, target_id=None, smoothing_rm='low', smoothing_st='high',
-                        return_maps=False, **kwargs_spatial):
+def compute_corrcoeff(cell_df1, actions, cell_df2=None, target_id=None, smoothing_rm='low', smoothing_st='high',
+                      return_maps=False, **kwargs_spatial):
+    if target_id is None:
+        if len(cell_df1) > 1:
+            print('Provide target_id')
+            return
+
+    interp = kwargs_spatial['interp']
+    quantiles = kwargs_spatial['quantiles']
+    fc = kwargs_spatial['fc']
+    xregion = kwargs_spatial['xregion']
+    yregion = kwargs_spatial['yregion']
+    smoothing_low = kwargs_spatial['smoothing_low']
+    smoothing_high = kwargs_spatial['smoothing_high']
+    bin_size = kwargs_spatial['bin_size']
+
+    if smoothing_rm == 'high':
+        smoothing_rate = smoothing_high
+    else:
+        smoothing_rate = smoothing_low
+    if smoothing_st == 'high':
+        smoothing_stim = smoothing_high
+    else:
+        smoothing_stim = smoothing_low
+
+    # check if cell in df
+    if target_id is None:
+        unit_row = cell_df1.iloc[0]
+    elif target_id in cell_df1.unique_unit_id.values:
+        unit_row = cell_df1[cell_df1.unique_unit_id == target_id].iloc[0]
+    else:
+        unit_row = None
+        print('Target cell not found for correlation')
+        rate_map_1c = rate_map_2c = None
+        corr = np.nan
+    if unit_row is not None:
+        action = unit_row['action']
+        unit_id = unit_row['unit_id']
+        ch_group = unit_row['channel_group']
+
+        data_path = get_data_path(actions[action])
+        tags = actions[action].tags
+
+        if 'intan' in tags:
+            epochs = load_epochs(data_path)
+            if len(epochs) == 4:
+                # stimulation trial
+                sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id,
+                                        t_start=epochs[0].times[0], load_waveforms=True)
+                x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                               remove_quantiles=quantiles, t_start=epochs[2].times[0])
+            elif len(epochs) == 2:
+                # non-stim trial
+                sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id,
+                                        t_start=epochs[0].times[0], load_waveforms=True)
+                x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                               remove_quantiles=quantiles, t_start=epochs[1].times[0])
+            else:
+                print('Wrong epochs')
+        else:
+            x, y, t, speed = load_tracking(data_path, select_tracking=0, interp=interp, fc=fc,
+                                           remove_quantiles=quantiles)
+            sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id, load_waveforms=True)
+        box_size = np.array([np.max(x), np.max(y)])
+        x, y, t = remove_central_region(x, y, t, xregion * np.max(x), yregion * np.max(y))
+
+        rate_map_1 = compute_rate_map(x, y, t, sptr[0], box_size=box_size, bin_size=bin_size, xregion=xregion,
+                                      yregion=yregion, smoothing=smoothing_rate)
+
+        # get stim action
+        if cell_df2 is None:
+            if len(cell_df1.stim_action) > 0:
+                stim_action = cell_df1.iloc[0].stim_action
+                data_path = get_data_path(actions[stim_action])
+                tags = actions[stim_action].tags
+            else:
+                print('Could not load stimulation info')
+                return np.nan
+
+            if 'intan' in tags:
+                # print('Intan recording')
+                epochs = load_epochs(data_path)
+                if len(epochs) == 4:
+                    # stimulation trial
+                    times = epochs[1].times - epochs[0].times[0]
+                    sptr = [neo.SpikeTrain(times=times, t_start=0 * pq.s, t_stop=times[-1])]
+                    x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                                   remove_quantiles=quantiles, t_start=epochs[2].times[0])
+                    box_size = np.array([np.max(x), np.max(y)])
+                    x, y, t = remove_central_region(x, y, t, xregion * np.max(x), yregion * np.max(y))
+
+                    rate_map_2 = compute_rate_map(x, y, t, sptr, box_size=box_size, bin_size=bin_size,
+                                                  xregion=xregion, yregion=yregion, smoothing=smoothing_stim)
+            else:
+                print('Could not load stimulation info')
+                return np.nan
+        else:
+            if target_id in cell_df2.unique_unit_id.values:
+                unit_row = cell_df2[cell_df2.unique_unit_id == target_id].iloc[0]
+                action = unit_row['action']
+                unit_id = unit_row['unit_id']
+                ch_group = unit_row['channel_group']
+
+                data_path = get_data_path(actions[action])
+                tags = actions[action].tags
+
+                if 'intan' in tags:
+                    epochs = load_epochs(data_path)
+                    if len(epochs) == 4:
+                        # stimulation trial
+                        sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id,
+                                                t_start=epochs[0].times[0], load_waveforms=True)
+                        x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                                       remove_quantiles=quantiles, t_start=epochs[2].times[0])
+                    elif len(epochs) == 2:
+                        # non-stim trial
+                        sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id,
+                                                t_start=epochs[0].times[0], load_waveforms=True)
+                        x, y, t, speed = load_tracking(data_path, interp=interp, select_tracking=0, fc=fc,
+                                                       remove_quantiles=quantiles, t_start=epochs[1].times[0])
+                    else:
+                        print('Wrong epochs')
+                else:
+                    x, y, t, speed = load_tracking(data_path, select_tracking=0, interp=interp, fc=fc,
+                                                   remove_quantiles=quantiles)
+                    sptr = load_spiketrains(data_path, channel_group=ch_group, unit_id=unit_id, load_waveforms=True)
+                box_size = np.array([np.max(x), np.max(y)])
+                x, y, t = remove_central_region(x, y, t, xregion * np.max(x), yregion * np.max(y))
+
+                rate_map_2 = compute_rate_map(x, y, t, sptr[0], box_size=box_size, bin_size=bin_size, xregion=xregion,
+                                              yregion=yregion, smoothing=smoothing_rate)
+            else:
+                print('Could not find target cell in second dataframe')
+                return np.nan
+
+        rate_map_1c, rate_map_2c = crop_rate_maps(rate_map_1, rate_map_2)
+        rate_map_1c[np.where(np.isnan(rate_map_1c) == True)] = 0
+        rate_map_2c[np.where(np.isnan(rate_map_2c) == True)] = 0
+
+        rate_map_1lin = rate_map_1c.reshape((1, rate_map_1c.size))
+        rate_map_2lin = rate_map_2c.reshape((1, rate_map_1c.size))
+        corr = np.corrcoef(rate_map_1lin, rate_map_2lin)[0, 1]
+
+    if return_maps:
+        return corr, rate_map_1c, rate_map_2c
+    else:
+        return corr
+
+
+def compute_delta_com(cell_df1, actions, cell_df2=None, target_id=None, smoothing_rm='low', smoothing_st='high',
+                     return_maps=False, **kwargs_spatial):
     if target_id is None:
         print('Provide target_id')
         return
@@ -915,24 +1091,18 @@ def compute_correlation(cell_df1, actions, cell_df2=None, target_id=None, smooth
                 return np.nan
 
         rate_map_1c, rate_map_2c = crop_rate_maps(rate_map_1, rate_map_2)
-        rate_map_1c[np.where(np.isnan(rate_map_1c) == True)] = 0
-        rate_map_2c[np.where(np.isnan(rate_map_2c) == True)] = 0
-        rate_map_1lin = rate_map_1c.reshape((1, rate_map_1c.size))
-        rate_map_2lin = rate_map_2c.reshape((1, rate_map_1c.size))
-        
-        # remove nans
-        corr = np.corrcoef(rate_map_1lin, rate_map_2lin)[0, 1]
+        dist, angle = cross_correlation_centre_of_mass(rate_map_1c, rate_map_2c)
 
-        # corr = np.ma.corrcoef(np.ma.masked_invalid(rate_map_1lin), np.ma.masked_invalid(rate_map_2lin))[0, 1]
     else:
         print('Target cell not found for correlation')
         rate_map_1c = rate_map_2c = None
-        corr = np.nan
+        dist = np.nan
+        angle = np.nan
 
     if return_maps:
-        return corr, rate_map_1c, rate_map_2c
+        return dist, angle, rate_map_1c, rate_map_2c
     else:
-        return corr
+        return dist, angle
 
 
 def save_phy_to_exdir(project, action, sorter):
